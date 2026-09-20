@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Fuseline Report — {{ case.name }}</title>
+  <style>
+    :root {
+      --ink: #1a1f24;
+      --muted: #5c6670;
+      --paper: #f4f6f8;
+      --amber: #c45c16;
+      --line: #d5dbe3;
+    }
+    body {
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      margin: 0;
+      padding: 2rem;
+      line-height: 1.45;
+    }
+    h1, h2 { font-weight: 600; letter-spacing: -0.02em; }
+    h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+    .meta { color: var(--muted); font-family: "IBM Plex Mono", Consolas, monospace; font-size: 0.85rem; }
+    section { background: #fff; border: 1px solid var(--line); padding: 1.25rem 1.5rem; margin: 1.25rem 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .sev-pass { color: #1f6b3a; }
+    .sev-warn { color: var(--amber); }
+    .sev-fail { color: #9b1c1c; }
+    .sev-info { color: var(--muted); }
+    .mono { font-family: "IBM Plex Mono", Consolas, monospace; font-size: 0.8rem; }
+    @media print {
+      body { background: #fff; padding: 0; }
+      section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Fuseline Forensic Report</h1>
+    <div class="meta">{{ case.name }} · examiner {{ case.examiner or "—" }} · TZ {{ case.timezone }} · case {{ case.id }}</div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <p>{{ event_count }} events · {{ artifacts|length }} artifacts · {{ session_count }} proximity sessions</p>
+    <p>Sources:
+      {% for src, count in source_counts.items() %}
+        <strong>{{ src }}</strong> ({{ count }}){% if not loop.last %}, {% endif %}
+      {% else %}
+        none
+      {% endfor %}
+    </p>
+  </section>
+
+  <section>
+    <h2>Acquisition — Artifact Inventory</h2>
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Type</th><th>SHA-256</th><th>Rows</th><th>Ingested</th></tr>
+      </thead>
+      <tbody>
+        {% for a in artifacts %}
+        <tr>
+          <td>{{ a.original_name }}</td>
+          <td>{{ a.source_type }}</td>
+          <td class="mono">{{ a.sha256 }}</td>
+          <td>{{ a.row_count }}</td>
+          <td class="mono">{{ a.ingested_at }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5">No artifacts ingested.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Validation</h2>
+    <table>
+      <thead><tr><th>Severity</th><th>Code</th><th>Message</th></tr></thead>
+      <tbody>
+        {% for f in findings %}
+        <tr>
+          <td class="sev-{{ f.severity }}">{{ f.severity }}</td>
+          <td class="mono">{{ f.code }}</td>
+          <td>{{ f.message }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3">No validation findings yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Proximity Sessions</h2>
+    <table>
+      <thead><tr><th>Score</th><th>Window</th><th>Sources</th><th>Summary</th></tr></thead>
+      <tbody>
+        {% for s in sessions %}
+        <tr>
+          <td>{{ s.score }}</td>
+          <td class="mono">{{ s.start_utc }} → {{ s.end_utc }}</td>
+          <td>{{ s.sources|join(", ") }}</td>
+          <td>{{ s.summary }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4">No multi-source sessions detected.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Sample Timeline (first 50)</h2>
+    <table>
+      <thead><tr><th>UTC</th><th>Source</th><th>Title</th></tr></thead>
+      <tbody>
+        {% for e in sample_events %}
+        <tr>
+          <td class="mono">{{ e.ts_utc }}</td>
+          <td>{{ e.source }}</td>
+          <td>{{ e.title }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Methodology</h2>
+    <ol>
+      <li><strong>Acquisition</strong> — artifacts hashed (SHA-256) and stored with provenance.</li>
+      <li><strong>Analysis</strong> — timestamps normalized to UTC; events merged from location, browsing, and app usage (plus optional Plaso L2TCSV).</li>
+      <li><strong>Validation</strong> — source coverage, timestamp parseability, gaps, and hash inventory checked.</li>
+      <li><strong>Correlation</strong> — proximity sessions group ≥2 distinct sources within a configurable time window.</li>
+      <li><strong>Report</strong> — this document plus CSV/JSON exports for examiner handoff.</li>
+    </ol>
+  </section>
+</body>
+</html>
