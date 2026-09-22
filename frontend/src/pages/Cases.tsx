@@ -75,7 +75,7 @@ const BLANK: CaseInput = { name: '', examiner: '', timezone: 'UTC', notes: '' }
 export function CasesPage() {
   const navigate = useNavigate()
   const { caseId: activeCaseId, selectCase, refreshCase } = useCase()
-  const zones = useMemo(timeZoneNames, [])
+  const zones = useMemo(() => timeZoneNames(), [])
   const [cases, setCases] = useState<Case[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

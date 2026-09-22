@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type Artifact,
   type Finding,
@@ -55,9 +55,15 @@ export function useTimelineData(caseId: string, filters: Filters) {
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Read once (lazily, not on every render) as the placeholder window's anchor before the
+  // real overview has loaded — calling Date.now() directly inside the memo below would make
+  // it an impure render-phase call.
+  const mountedAtRef = useRef<number>(undefined)
+  mountedAtRef.current ??= Date.now()
+
   const bounds = useMemo<Range>(() => {
     if (!overview || overview.total === 0) {
-      const now = Date.now()
+      const now = mountedAtRef.current!
       return { start: now - 3_600_000, end: now }
     }
     return padRange(overview.origin_ms, overview.origin_ms + overview.bucket_ms * overview.bucket_count, 0.01, 30_000)

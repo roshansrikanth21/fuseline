@@ -3,7 +3,7 @@
   var pref = 'system'
   try {
     pref = localStorage.getItem('fuseline.theme') || 'system'
-  } catch (e) {
+  } catch {
     /* storage unavailable */
   }
   var dark = pref === 'dark' || (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
