@@ -52,9 +52,9 @@
 }
 
 .brush-window {
-  fill: var(--amber);
+  fill: var(--accent);
   fill-opacity: 0.1;
-  stroke: var(--amber);
+  stroke: var(--accent);
   stroke-width: 1.5;
 }
 
@@ -64,7 +64,7 @@
 }
 
 .brush-handle {
-  fill: var(--amber);
+  fill: var(--accent);
 }
 
 .brush-caption {
@@ -97,7 +97,7 @@
 }
 
 .chart:focus-visible {
-  outline: 2px solid var(--amber);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -150,18 +150,18 @@
 }
 
 .session-band {
-  fill: var(--amber);
+  fill: var(--accent);
   opacity: 0.13;
 }
 
 .session-band.active {
   opacity: 0.28;
-  stroke: var(--amber);
+  stroke: var(--accent);
   stroke-width: 1;
 }
 
 .cursor-line {
-  stroke: var(--amber);
+  stroke: var(--accent);
   stroke-width: 1;
   stroke-dasharray: 3 3;
 }
@@ -176,7 +176,7 @@
 }
 
 .mark-halo {
-  stroke: var(--amber);
+  stroke: var(--accent);
   opacity: 0.35;
 }
 
@@ -249,7 +249,7 @@
 }
 
 .map-point.lit {
-  stroke: var(--amber);
+  stroke: var(--accent);
   stroke-width: 2;
 }
 
@@ -263,9 +263,9 @@
 }
 
 .map-session {
-  fill: var(--amber);
+  fill: var(--accent);
   fill-opacity: 0.12;
-  stroke: var(--amber);
+  stroke: var(--accent);
   stroke-dasharray: 4 3;
 }
 
@@ -387,8 +387,8 @@
 
 .session-card:hover,
 .session-card.active {
-  border-color: var(--amber);
-  background: var(--amber-soft);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .session-top {
@@ -400,7 +400,7 @@
 
 .session-card .score {
   font-family: var(--font-mono);
-  color: var(--amber-text);
+  color: var(--accent-text);
   font-size: 0.75rem;
 }
 

@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { type IntegrityResult, type ReportSummary, type Session, type TimelineEvent, api } from '../api/client'
+import {
+  type AuditEntry,
+  type IntegrityResult,
+  type ReportSummary,
+  type Session,
+  type TimelineEvent,
+  api,
+} from '../api/client'
 import { Callout } from '../components/Callout'
 import { FindingsTable } from '../components/FindingsTable'
 import { NoCase } from '../components/NoCase'
@@ -31,6 +38,7 @@ export function ReportPage() {
 
 function Report({ caseId }: { caseId: string }) {
   const [report, setReport] = useState<ReportSummary | null>(null)
+  const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [exporting, setExporting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -42,7 +50,11 @@ function Report({ caseId }: { caseId: string }) {
     setLoading(true)
     setError(null)
     try {
-      setReport(await api.report(caseId))
+      // The audit trail is fetched from its own endpoint (not the copy embedded in the report
+      // summary, which is capped at 500) so long-lived cases still show their full history.
+      const [rep, audit] = await Promise.all([api.report(caseId), api.audit(caseId)])
+      setReport(rep)
+      setAuditEntries(audit)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load report')
     } finally {
@@ -54,12 +66,16 @@ function Report({ caseId }: { caseId: string }) {
     void load()
   }, [load])
 
-  async function onExport(kind: 'html' | 'csv' | 'json') {
-    setExporting(kind)
+  async function onExport(kind: 'html' | 'csv' | 'json', raw = false) {
+    const label = raw ? 'csv-raw' : kind
+    setExporting(label)
     setError(null)
     try {
       if (kind === 'html') window.open(`/api/cases/${caseId}/report/html`, '_blank', 'noopener,noreferrer')
-      else await downloadExport(`/api/cases/${caseId}/report/${kind}`, `fuseline_${caseId.slice(0, 8)}.${kind}`)
+      else {
+        const url = `/api/cases/${caseId}/report/${kind}${raw ? '?raw=true' : ''}`
+        await downloadExport(url, `fuseline_${caseId.slice(0, 8)}${raw ? '_raw' : ''}.${kind}`)
+      }
       // Exports are audited server-side; reload so the trail below shows this one.
       setTimeout(() => void load(), 400)
     } catch (err) {
@@ -131,6 +147,17 @@ function Report({ caseId }: { caseId: string }) {
               {exporting === 'json' ? 'JSON…' : 'JSON (lossless)'}
             </button>
           </div>
+        </div>
+        <div className="row" style={{ marginTop: '-0.25rem' }}>
+          <button
+            type="button"
+            className="btn ghost small"
+            disabled={!!exporting}
+            onClick={() => void onExport('csv', true)}
+            title="Same data, without the spreadsheet-formula safeguard — only use this if you trust every cell and need pristine values"
+          >
+            {exporting === 'csv-raw' ? 'Exporting raw CSV…' : 'Export raw CSV (unescaped)'}
+          </button>
         </div>
 
         {error ? <div className="error-box">{error}</div> : null}
@@ -321,7 +348,7 @@ function Report({ caseId }: { caseId: string }) {
             </table>
           </div>
         ) : null}
-        {report && report.audit.length > 0 ? (
+        {auditEntries.length > 0 ? (
           <div className="table-wrap audit">
             <table className="data">
               <thead>
@@ -336,7 +363,7 @@ function Report({ caseId }: { caseId: string }) {
                 </tr>
               </thead>
               <tbody>
-                {report.audit.map((a) => (
+                {auditEntries.map((a) => (
                   <tr key={a.id}>
                     <td className="num mono">{a.id}</td>
                     <td className="mono nowrap">{formatDateTime(Date.parse(a.ts))}</td>

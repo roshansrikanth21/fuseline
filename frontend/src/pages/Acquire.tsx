@@ -46,6 +46,7 @@ function Acquire({ caseId, onChanged }: { caseId: string; onChanged: () => Promi
   const [error, setError] = useState<string | null>(null)
   const [integrity, setIntegrity] = useState<IntegrityResult | null>(null)
   const [verifying, setVerifying] = useState(false)
+  const [revalidating, setRevalidating] = useState(false)
 
   const pending = useRef<{ id: string; file: File; hint: string }[]>([])
   const draining = useRef(false)
@@ -147,6 +148,18 @@ function Acquire({ caseId, onChanged }: { caseId: string; onChanged: () => Promi
     }
   }
 
+  async function revalidate() {
+    setRevalidating(true)
+    setError(null)
+    try {
+      setFindings(await api.validation(caseId, true))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Validation failed')
+    } finally {
+      setRevalidating(false)
+    }
+  }
+
   const integrityById = new Map(integrity?.artifacts.map((a) => [a.artifact_id, a.status]) ?? [])
   const busy = queue.some((q) => q.status === 'uploading' || q.status === 'queued') || demoBusy
 
@@ -170,7 +183,7 @@ function Acquire({ caseId, onChanged }: { caseId: string; onChanged: () => Promi
               ))}
             </select>
           </label>
-          <button type="button" className="btn amber" disabled={busy} onClick={() => void loadDemo()}>
+          <button type="button" className="btn accent" disabled={busy} onClick={() => void loadDemo()}>
             {demoBusy ? 'Loading…' : 'Load sample evidence'}
           </button>
         </div>
@@ -333,7 +346,18 @@ function Acquire({ caseId, onChanged }: { caseId: string; onChanged: () => Promi
       </section>
 
       <section className="panel">
-        <h2>Validation snapshot</h2>
+        <div className="panel-head">
+          <h2>Validation snapshot</h2>
+          <button
+            type="button"
+            className="btn secondary small"
+            disabled={revalidating}
+            onClick={() => void revalidate()}
+            title="Recompute every check now, instead of using the results cached from the last ingest"
+          >
+            {revalidating ? 'Recomputing…' : 'Recompute'}
+          </button>
+        </div>
         <FindingsTable findings={findings} empty="Validation runs after ingest." />
         <div className="row">
           <Link className="btn" to="/timeline">

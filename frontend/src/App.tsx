@@ -54,16 +54,16 @@ export default function App() {
         </div>
         <nav className="nav" aria-label="Workflow">
           <NavLink to="/" end className={link}>
-            <span className="step">1</span> Cases
+            Cases
           </NavLink>
           <NavLink to="/acquire" className={link}>
-            <span className="step">2</span> Acquire
+            Acquire
           </NavLink>
           <NavLink to="/timeline" className={link}>
-            <span className="step">3</span> Timeline
+            Timeline
           </NavLink>
           <NavLink to="/report" className={link}>
-            <span className="step">4</span> Report
+            Report
           </NavLink>
         </nav>
         <div className="top-actions">
