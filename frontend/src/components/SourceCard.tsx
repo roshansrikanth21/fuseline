@@ -21,6 +21,11 @@ type Props = {
   children?: ReactNode
 }
 
+function shortHash(sha: string): string {
+  if (sha.length <= 20) return sha
+  return `${sha.slice(0, 10)}…${sha.slice(-8)}`
+}
+
 /** One evidence category: status, a quick-drop target scoped to this source, and its files as a small tree. */
 export function SourceCard({
   source,
@@ -107,19 +112,23 @@ export function SourceCard({
                     <span className="tree-branch" aria-hidden="true" />
                     <div className="source-tree-row">
                       <div className="cell-title">{a.original_name}</div>
-                      <div className="cell-sub mono">
-                        {a.parser} · {formatBytes(a.size_bytes)} · {formatDateTime(Date.parse(a.ingested_at))}
+                      <div className="cell-sub">
+                        <span className="event-pill mono">{formatCount(a.row_count)} events</span>
+                        <span className="mono muted">
+                          {a.parser} · {formatBytes(a.size_bytes)} · {formatDateTime(Date.parse(a.ingested_at))}
+                        </span>
                         {a.skipped_rows > 0 ? (
                           <span className="warn-text" title={a.notes.join('\n')}>
-                            {' '}
                             · {formatCount(a.skipped_rows)} rows skipped
                           </span>
                         ) : null}
                       </div>
-                      <div className="cell-sub mono hash-row">
-                        {a.sha256}
-                        <CopyButton value={a.sha256} />
-                        {status ? <span className={`sev sev-${status === 'ok' ? 'pass' : 'fail'}`}> {status}</span> : null}
+                      <div className="hash-row">
+                        <code className="hash-text mono" title={a.sha256}>
+                          SHA-256 {shortHash(a.sha256)}
+                        </code>
+                        <CopyButton value={a.sha256} label="Copy hash" className="copy-hash" />
+                        {status ? <span className={`sev sev-${status === 'ok' ? 'pass' : 'fail'}`}>{status}</span> : null}
                       </div>
                     </div>
                   </li>

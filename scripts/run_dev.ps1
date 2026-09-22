@@ -29,6 +29,10 @@ if (-not (Test-Path ".\frontend\node_modules")) {
   Pop-Location
 }
 
+# Project-local adb so Acquire → Detect device works without a global Android SDK
+& $VenvPython .\scripts\ensure_platform_tools.py
+if ($LASTEXITCODE -ne 0) { Write-Warning "Could not install bundled platform-tools; device import may be unavailable." }
+
 Write-Host "Starting API on http://127.0.0.1:8000 and UI on http://127.0.0.1:5173 (Ctrl+C to stop)..."
 $api = Start-Process -PassThru -NoNewWindow -FilePath $VenvPython -ArgumentList @(
   "-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend",

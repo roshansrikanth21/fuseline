@@ -191,12 +191,19 @@ function Acquire({ caseId, onChanged }: { caseId: string; onChanged: () => Promi
             <h1>Acquire</h1>
             <p className="muted small">
               Each file is hashed (SHA-256), stored read-only, and recognised by its <strong>content</strong> —
-              never its name.
+              never its name. Open <Link to="/timeline">Timeline</Link> to inspect the events.
             </p>
           </div>
-          <button type="button" className="btn accent small" disabled={busy} onClick={() => void loadDemo()}>
-            {demoBusy ? 'Loading…' : 'Load sample evidence'}
-          </button>
+          <div className="row wrap-gap">
+            {artifacts.length > 0 ? (
+              <Link to="/timeline" className="btn accent small">
+                Open Timeline
+              </Link>
+            ) : null}
+            <button type="button" className="btn secondary small" disabled={busy} onClick={() => void loadDemo()}>
+              {demoBusy ? 'Loading…' : 'Load sample evidence'}
+            </button>
+          </div>
         </div>
 
         {message ? <Callout tone="pass">{message}</Callout> : null}

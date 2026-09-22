@@ -14,6 +14,7 @@ if ! .venv/bin/python -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) 
   exit 1
 fi
 .venv/bin/pip install -q -r requirements.txt
+.venv/bin/python scripts/ensure_platform_tools.py || echo "Warning: could not install bundled platform-tools; device import may be unavailable." >&2
 
 if [[ "${REBUILD:-0}" == "1" || ! -f frontend/dist/index.html ]]; then
   echo "Building the UI..."

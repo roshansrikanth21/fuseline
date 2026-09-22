@@ -24,6 +24,9 @@ if [[ ! -d frontend/node_modules ]]; then
   (cd frontend && npm install)
 fi
 
+# Project-local adb so Acquire → Detect device works without a global Android SDK
+.venv/bin/python scripts/ensure_platform_tools.py || echo "Warning: could not install bundled platform-tools; device import may be unavailable." >&2
+
 echo "Starting API on http://127.0.0.1:8000 and UI on http://127.0.0.1:5173 (Ctrl+C to stop)..."
 .venv/bin/python -m uvicorn app.main:app --reload --reload-dir backend \
   --host 127.0.0.1 --port 8000 --app-dir backend &

@@ -15,14 +15,33 @@ SAMPLE_DEVICES = (
 )
 
 
-def test_adb_path_raises_when_not_on_path(monkeypatch):
+def test_adb_path_raises_when_not_on_path(monkeypatch, tmp_path):
+    monkeypatch.delenv("FUSELINE_ADB", raising=False)
     monkeypatch.setattr(device.shutil, "which", lambda _: None)
-    with pytest.raises(device.AdbNotAvailable, match="Platform Tools"):
+    monkeypatch.setattr(device, "BUNDLED_DIR", tmp_path / "missing-platform-tools")
+    monkeypatch.setattr(device, "_candidate_paths", lambda: [])
+    with pytest.raises(device.AdbNotAvailable, match="ensure_platform_tools"):
         device.adb_path()
 
 
+def test_adb_path_prefers_env_then_bundle(monkeypatch, tmp_path):
+    monkeypatch.delenv("FUSELINE_ADB", raising=False)
+    bundled = tmp_path / "platform-tools"
+    bundled.mkdir()
+    fake = bundled / ("adb.exe" if device.sys.platform == "win32" else "adb")
+    fake.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(device, "BUNDLED_DIR", bundled)
+    monkeypatch.setattr(device.shutil, "which", lambda _: None)
+    assert device.adb_path() == str(fake.resolve())
+
+    env_bin = tmp_path / "custom-adb"
+    env_bin.write_text("y", encoding="utf-8")
+    monkeypatch.setenv("FUSELINE_ADB", str(env_bin))
+    assert device.adb_path() == str(env_bin.resolve())
+
+
 def test_list_devices_parses_states_and_model(monkeypatch):
-    monkeypatch.setattr(device.shutil, "which", lambda _: "/usr/bin/adb")
+    monkeypatch.setattr(device, "adb_path", lambda: "/usr/bin/adb")
     monkeypatch.setattr(
         device.subprocess,
         "run",
@@ -39,7 +58,7 @@ def test_list_devices_parses_states_and_model(monkeypatch):
 
 
 def test_list_devices_empty(monkeypatch):
-    monkeypatch.setattr(device.shutil, "which", lambda _: "/usr/bin/adb")
+    monkeypatch.setattr(device, "adb_path", lambda: "/usr/bin/adb")
     monkeypatch.setattr(
         device.subprocess,
         "run",
@@ -49,7 +68,7 @@ def test_list_devices_empty(monkeypatch):
 
 
 def test_run_raises_on_nonzero_exit(monkeypatch):
-    monkeypatch.setattr(device.shutil, "which", lambda _: "/usr/bin/adb")
+    monkeypatch.setattr(device, "adb_path", lambda: "/usr/bin/adb")
     monkeypatch.setattr(
         device.subprocess,
         "run",
@@ -60,7 +79,7 @@ def test_run_raises_on_nonzero_exit(monkeypatch):
 
 
 def test_run_raises_on_timeout(monkeypatch):
-    monkeypatch.setattr(device.shutil, "which", lambda _: "/usr/bin/adb")
+    monkeypatch.setattr(device, "adb_path", lambda: "/usr/bin/adb")
 
     def raise_timeout(*a, **k):
         raise subprocess.TimeoutExpired(cmd="adb", timeout=10)
@@ -71,7 +90,7 @@ def test_run_raises_on_timeout(monkeypatch):
 
 
 def test_pull_rejects_a_serial_that_looks_like_a_shell_argument(monkeypatch):
-    monkeypatch.setattr(device.shutil, "which", lambda _: "/usr/bin/adb")
+    monkeypatch.setattr(device, "adb_path", lambda: "/usr/bin/adb")
     monkeypatch.setattr(
         device.subprocess,
         "run",
@@ -82,7 +101,7 @@ def test_pull_rejects_a_serial_that_looks_like_a_shell_argument(monkeypatch):
 
 
 def test_pull_rejects_a_serial_not_currently_connected(monkeypatch):
-    monkeypatch.setattr(device.shutil, "which", lambda _: "/usr/bin/adb")
+    monkeypatch.setattr(device, "adb_path", lambda: "/usr/bin/adb")
     monkeypatch.setattr(
         device.subprocess,
         "run",
@@ -93,7 +112,7 @@ def test_pull_rejects_a_serial_not_currently_connected(monkeypatch):
 
 
 def test_pull_rejects_an_unauthorized_device(monkeypatch):
-    monkeypatch.setattr(device.shutil, "which", lambda _: "/usr/bin/adb")
+    monkeypatch.setattr(device, "adb_path", lambda: "/usr/bin/adb")
     monkeypatch.setattr(
         device.subprocess,
         "run",
@@ -112,7 +131,7 @@ def test_pull_calls_adb_with_the_verified_serial_and_no_shell(monkeypatch):
             return subprocess.CompletedProcess(args, 0, stdout=SAMPLE_DEVICES, stderr="")
         return subprocess.CompletedProcess(args, 0, stdout="Usage Events:\n", stderr="")
 
-    monkeypatch.setattr(device.shutil, "which", lambda _: "/usr/bin/adb")
+    monkeypatch.setattr(device, "adb_path", lambda: "/usr/bin/adb")
     monkeypatch.setattr(device.subprocess, "run", fake_run)
     out = device.pull_usagestats_text("emulator-5554")
     assert out == "Usage Events:\n"

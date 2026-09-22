@@ -1,9 +1,14 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api } from '../api/client'
 import { DeviceUsagePanel } from './DeviceUsagePanel'
 
 const CASE_ID = 'case-1'
+
+function renderPanel(ui: React.ReactElement) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>)
+}
 
 function open() {
   fireEvent.click(screen.getByRole('button', { name: 'Detect device…' }))
@@ -21,7 +26,7 @@ afterEach(() => {
 describe('DeviceUsagePanel', () => {
   it('is closed until asked to detect a device, and stops polling once closed', async () => {
     const devices = vi.spyOn(api, 'devices').mockResolvedValue([])
-    render(<DeviceUsagePanel caseId={CASE_ID} onImported={vi.fn()} />)
+    renderPanel(<DeviceUsagePanel caseId={CASE_ID} onImported={vi.fn()} />)
     expect(devices).not.toHaveBeenCalled()
 
     open()
@@ -36,14 +41,14 @@ describe('DeviceUsagePanel', () => {
 
   it('shows adb-missing guidance instead of a device list', async () => {
     vi.spyOn(api, 'devices').mockRejectedValue(new ApiError('adb was not found on this machine.', 503))
-    render(<DeviceUsagePanel caseId={CASE_ID} onImported={vi.fn()} />)
+    renderPanel(<DeviceUsagePanel caseId={CASE_ID} onImported={vi.fn()} />)
     open()
     expect(await screen.findByText('adb was not found on this machine.')).toBeInTheDocument()
   })
 
   it('shows an unauthorized device without a pull button', async () => {
     vi.spyOn(api, 'devices').mockResolvedValue([{ serial: 'ZY1', state: 'unauthorized', model: null, ready: false }])
-    render(<DeviceUsagePanel caseId={CASE_ID} onImported={vi.fn()} />)
+    renderPanel(<DeviceUsagePanel caseId={CASE_ID} onImported={vi.fn()} />)
     open()
     expect(await screen.findByText('unauthorized')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Pull app usage' })).toBeNull()
@@ -73,19 +78,20 @@ describe('DeviceUsagePanel', () => {
       duplicate: false,
     })
     const onImported = vi.fn()
-    render(<DeviceUsagePanel caseId={CASE_ID} onImported={onImported} />)
+    renderPanel(<DeviceUsagePanel caseId={CASE_ID} onImported={onImported} />)
     open()
     const button = await screen.findByRole('button', { name: 'Pull app usage' })
     fireEvent.click(button)
     expect(pull).toHaveBeenCalledWith(CASE_ID, 'emulator-5554')
     await waitFor(() => expect(onImported).toHaveBeenCalledOnce())
-    expect(await screen.findByText('Imported 42 app-usage events from the device.')).toBeInTheDocument()
+    expect(await screen.findByText(/Imported 42 app-usage events/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Timeline' })).toHaveAttribute('href', '/timeline')
   })
 
   it('surfaces a pull error without crashing', async () => {
     vi.spyOn(api, 'devices').mockResolvedValue([{ serial: 'S1', state: 'device', model: null, ready: true }])
     vi.spyOn(api, 'pullDeviceAppUsage').mockRejectedValue(new Error('adb shell dumpsys usagestats timed out'))
-    render(<DeviceUsagePanel caseId={CASE_ID} onImported={vi.fn()} />)
+    renderPanel(<DeviceUsagePanel caseId={CASE_ID} onImported={vi.fn()} />)
     open()
     fireEvent.click(await screen.findByRole('button', { name: 'Pull app usage' }))
     expect(await screen.findByText('adb shell dumpsys usagestats timed out')).toBeInTheDocument()

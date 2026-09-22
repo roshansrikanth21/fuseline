@@ -116,7 +116,7 @@ The compose file publishes the port on loopback only: Fuseline has no login (see
 ## Application workflow
 
 1. **Cases** — enter a case name, examiner and the **device timezone** (used only for timestamps that carry no timezone), then *Create & acquire*.
-2. **Acquire** — drop evidence files (or *Load sample evidence*). Each file shows what it was recognised as, how many events it produced, and any rows skipped. *Verify integrity* re-hashes every stored copy and checks the audit chain.
+2. **Acquire** — drop evidence files (or *Load sample evidence*), or under **App usage** use *Detect device…* to pull live app-usage via project-local `adb` (`tools/platform-tools/`, installed by `scripts/ensure_platform_tools.py` / `run_dev`). Browsing and location still need uploaded files. *Verify integrity* re-hashes every stored copy and checks the audit chain.
 3. **Timeline** — scroll to zoom, drag to pan (or drag the overview window); click a mark, a table row or a map point to inspect it. Click a proximity session to zoom to it and highlight its members on the chart and map. *Correlation…* changes how sessions are built.
 4. **Report** — review validation findings, sessions and the chain of custody; export HTML, CSV or JSON.
 
@@ -230,6 +230,7 @@ Environment variables (all optional):
 |----------|---------|---------|
 | `FUSELINE_DATA_DIR` | `./data` | Case databases, evidence copies and the audit log |
 | `FUSELINE_MAX_UPLOAD_MB` | `64` | Per-file upload limit |
+| `FUSELINE_ADB` | _(auto)_ | Absolute path to `adb` if you do not want the bundled `tools/platform-tools/` binary |
 | `FUSELINE_ALLOWED_HOSTS` | `127.0.0.1,localhost,[::1]` | `Host` values the API answers; `*` disables the check |
 | `FUSELINE_ALLOWED_ORIGINS` | *(empty)* | Extra browser origins allowed to make state-changing requests |
 | `FUSELINE_ALLOW_LOOPBACK_ORIGINS` | `1` | Trust any `http(s)://localhost:*` / `127.0.0.1:*` origin (e.g. the Vite dev server); `0` restricts to same-origin plus the list above |

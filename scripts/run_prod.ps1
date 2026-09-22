@@ -19,6 +19,9 @@ if ($LASTEXITCODE -ne 0) { throw "Fuseline needs Python 3.11 or newer." }
 & $VenvPython -m pip install -q -r requirements.txt
 if ($LASTEXITCODE -ne 0) { throw "Installing Python dependencies failed." }
 
+& $VenvPython .\scripts\ensure_platform_tools.py
+if ($LASTEXITCODE -ne 0) { Write-Warning "Could not install bundled platform-tools; device import may be unavailable." }
+
 if ($Rebuild -or -not (Test-Path ".\frontend\dist\index.html")) {
   Write-Host "Building the UI..."
   Push-Location frontend

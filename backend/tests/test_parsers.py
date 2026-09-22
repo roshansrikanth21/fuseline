@@ -385,6 +385,18 @@ def test_adb_usagestats_dump_is_detected_by_content(tmp_path: Path):
     assert detect_parser(path).name == "adb_usagestats_dump"
 
 
+def test_adb_usagestats_modern_android_header_is_detected(tmp_path: Path):
+    path = tmp_path / "dumpsys_modern.txt"
+    path.write_text(
+        adb_usagestats_dump([("com.whatsapp", "ACTIVITY_RESUMED", BASE)], modern=True),
+        encoding="utf-8",
+    )
+    assert AdbUsageStatsParser().sniff(path) > 0.8
+    assert detect_parser(path, preferred_source="app_usage").name == "adb_usagestats_dump"
+    result = AdbUsageStatsParser().parse(path, UTC_CTX)
+    assert len(result.records) == 1 and result.records[0].event_type == "activity_resumed"
+
+
 def test_adb_usagestats_dump_parses_events_and_extra_fields(tmp_path: Path):
     path = tmp_path / "dumpsys.txt"
     text = adb_usagestats_dump(
@@ -403,18 +415,19 @@ def test_adb_usagestats_dump_parses_events_and_extra_fields(tmp_path: Path):
     assert first.detail["type"] == "MOVE_TO_FOREGROUND" and first.detail["instanceId"] == "7"
 
 
-def test_adb_usagestats_dump_stops_at_the_next_section(tmp_path: Path):
+def test_adb_usagestats_dump_ignores_non_event_sections(tmp_path: Path):
     path = tmp_path / "dumpsys.txt"
     text = adb_usagestats_dump([("com.a", "MOVE_TO_FOREGROUND", BASE)]) + '    time="bogus" type=X package=com.b\n'
     path.write_text(text, encoding="utf-8")
     result = AdbUsageStatsParser().parse(path, UTC_CTX)
-    assert len(result.records) == 1  # the line after configStatsService: is not in the events block
+    assert len(result.records) == 1
+    assert result.skipped >= 1  # bogus timestamp
 
 
 def test_adb_usagestats_dump_skips_unparseable_lines(tmp_path: Path):
     path = tmp_path / "dumpsys.txt"
     text = (
-        "Usage Events:\n    garbled line with no fields\n"
+        "Usage Events:\n    time=\"not-a-real-event\" garbled\n"
         + adb_usagestats_dump([("com.a", "MOVE_TO_FOREGROUND", BASE)], preamble=False).split("Usage Events:\n", 1)[1]
     )
     path.write_text(text, encoding="utf-8")

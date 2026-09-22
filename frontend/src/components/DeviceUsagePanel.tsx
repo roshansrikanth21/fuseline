@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { type AdbDevice, type IngestResult, ApiError, api } from '../api/client'
 import { formatCount } from '../lib/format'
 
@@ -113,9 +114,14 @@ export function DeviceUsagePanel({ caseId, onImported }: Props) {
       {error ? <div className="error-box">{error}</div> : null}
       {result ? (
         <p className="ok-text small">
-          {result.duplicate
-            ? 'Already pulled from this device (same data) — nothing added.'
-            : `Imported ${formatCount(result.events_added)} app-usage events from the device.`}
+          {result.duplicate ? (
+            'Already pulled from this device (same data) — nothing added.'
+          ) : (
+            <>
+              Imported {formatCount(result.events_added)} app-usage events. Open{' '}
+              <Link to="/timeline">Timeline</Link> to inspect them (Acquire only lists the evidence file + hash).
+            </>
+          )}
         </p>
       ) : null}
 
@@ -123,9 +129,15 @@ export function DeviceUsagePanel({ caseId, onImported }: Props) {
         <details className="formats">
           <summary>Phone not showing up?</summary>
           <ol>
-            <li>Settings → About phone → tap "Build number" 7 times to unlock Developer options</li>
+            <li>
+              Fuseline bundles <span className="mono">adb</span> under{" "}
+              <span className="mono">tools/platform-tools/</span> (run{" "}
+              <span className="mono">python scripts/ensure_platform_tools.py</span> once if missing)
+            </li>
+            <li>Settings → About phone → tap &quot;Build number&quot; 7 times to unlock Developer options</li>
             <li>Settings → Developer options → turn on USB debugging</li>
             <li>Connect via USB and accept the authorisation prompt on the phone screen</li>
+            <li>Only app usage is pulled live; browsing and location still need uploaded files</li>
           </ol>
         </details>
       ) : null}

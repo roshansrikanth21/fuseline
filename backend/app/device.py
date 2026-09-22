@@ -1,27 +1,36 @@
-"""Minimal, read-only ADB wrapper for the "import from a connected phone" flow.
+"""Resolve and (via scripts) install a local copy of Android Platform Tools for device import.
 
-Everything here only ever reads from the device (``adb devices``, ``adb shell dumpsys
-usagestats``) — nothing writes to or modifies the phone. A device serial received from the
-API is never trusted blindly: it is re-checked against a fresh ``adb devices`` listing before
-use, and every subprocess call passes arguments as a list (never ``shell=True``), so there is
-no shell-injection surface regardless.
+Lookup order for ``adb``:
+1. ``FUSELINE_ADB`` — explicit path to the adb binary
+2. Bundled ``tools/platform-tools/adb`` (or ``adb.exe``) next to the project
+3. ``adb`` on PATH
+4. Common Windows install locations (Android Studio / SDK)
+
+Binaries are not committed; run ``python scripts/ensure_platform_tools.py`` (or
+``scripts/run_dev.*``, which calls it) to download Google's platform-tools zip.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
+from pathlib import Path
+
+from app.config import PROJECT_ROOT
 
 SERIAL_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 LIST_TIMEOUT_SECONDS = 10
 PULL_TIMEOUT_SECONDS = 45
 PLATFORM_TOOLS_URL = "https://developer.android.com/tools/releases/platform-tools"
+BUNDLED_DIR = PROJECT_ROOT / "tools" / "platform-tools"
 
 
 class AdbNotAvailable(RuntimeError):
-    """adb is not installed / not on PATH."""
+    """adb is not installed / not on PATH / not bundled."""
 
 
 class AdbDeviceError(RuntimeError):
@@ -39,19 +48,75 @@ class AdbDevice:
         return self.state == "device"
 
 
-def adb_path() -> str:
-    path = shutil.which("adb")
-    if not path:
-        raise AdbNotAvailable(
-            "adb was not found on this machine. Install Android Platform Tools "
-            f"({PLATFORM_TOOLS_URL}) and make sure 'adb' is on your PATH, then refresh."
+def _adb_name() -> str:
+    return "adb.exe" if sys.platform == "win32" else "adb"
+
+
+def bundled_adb_path() -> Path:
+    return BUNDLED_DIR / _adb_name()
+
+
+def _candidate_paths() -> list[Path]:
+    """Ordered places to look for an adb binary (existence checked by the caller)."""
+    names = (_adb_name(),)
+    out: list[Path] = []
+
+    env = os.environ.get("FUSELINE_ADB", "").strip()
+    if env:
+        out.append(Path(env))
+
+    out.append(bundled_adb_path())
+
+    which = shutil.which("adb")
+    if which:
+        out.append(Path(which))
+
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA", "")
+        user = os.environ.get("USERPROFILE", "")
+        extras = [
+            Path(local) / "Android" / "Sdk" / "platform-tools" / "adb.exe" if local else None,
+            Path(user) / "AppData" / "Local" / "Android" / "Sdk" / "platform-tools" / "adb.exe" if user else None,
+            Path(r"C:\Android\platform-tools\adb.exe"),
+            Path(r"C:\Program Files\Android\android-sdk\platform-tools\adb.exe"),
+        ]
+        out.extend(p for p in extras if p is not None)
+    else:
+        out.extend(
+            [
+                Path("/usr/lib/android-sdk/platform-tools/adb"),
+                Path("/opt/android-sdk/platform-tools/adb"),
+                Path.home() / "Library" / "Android" / "sdk" / "platform-tools" / "adb",
+                Path.home() / "Android" / "Sdk" / "platform-tools" / "adb",
+            ]
         )
-    return path
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in out:
+        key = str(path.resolve()) if path.exists() else str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def adb_path() -> str:
+    for candidate in _candidate_paths():
+        if candidate.is_file():
+            return str(candidate.resolve())
+    raise AdbNotAvailable(
+        "adb was not found. Run `python scripts/ensure_platform_tools.py` from the Fuseline "
+        f"project root (downloads Google Platform Tools into tools/platform-tools/), or install "
+        f"them yourself ({PLATFORM_TOOLS_URL}) and put adb on PATH, then refresh."
+    )
 
 
 def _run(args: list[str], timeout: int) -> str:
     try:
-        proc = subprocess.run(  # list args, no shell=True, adb path resolved via shutil.which
+        proc = subprocess.run(  # list args, no shell=True
             [adb_path(), *args],
             capture_output=True,
             text=True,

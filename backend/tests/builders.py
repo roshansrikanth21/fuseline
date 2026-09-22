@@ -156,21 +156,29 @@ def plaso_jsonl(path: Path, records: list[dict]) -> Path:
     return path
 
 
-def adb_usagestats_dump(events: list[tuple[str, str, datetime]], *, preamble: bool = True) -> str:
-    """Synthetic `adb shell dumpsys usagestats` text. ``events`` are (package, TYPE, when)."""
+def adb_usagestats_dump(
+    events: list[tuple[str, str, datetime]],
+    *,
+    preamble: bool = True,
+    modern: bool = False,
+) -> str:
+    """Synthetic `adb shell dumpsys usagestats` text. ``events`` are (package, TYPE, when).
+
+    ``modern=True`` mimics Android 12+ dumps that use ``Last 24 hour events`` instead of
+    the older ``Usage Events:`` section header.
+    """
     lines = []
     if preamble:
         lines += [
-            "componentUsageStatsService:",
-            "  package stats:",
-            '    package: "com.whatsapp"',
-            "      totalTimeUsed=1h23m",
+            "Flags:",
+            "    android.app.usage.user_interaction_type_api: true",
+            "user=0 ",
             "",
         ]
-    lines.append("  Usage Events:")
+    lines.append("  Last 24 hour events (timeRange=\"…\")" if modern else "  Usage Events:")
     for package, event_type, when in events:
         ts = when.strftime("%Y-%m-%d %H:%M:%S")
         lines.append(f'    time="{ts}" type={event_type} package={package} class=.MainActivity instanceId=7')
-    lines.append("configStatsService:")  # a following, unrelated section should end the block
+    lines.append("configStatsService:")  # following, unrelated section
     lines.append("  nothing to see here")
     return "\n".join(lines) + "\n"

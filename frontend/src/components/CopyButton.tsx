@@ -33,15 +33,18 @@ export function CopyButton({ value, label = 'Copy', className = '' }: Props) {
   return (
     <button
       type="button"
-      className={`btn ghost small ${className}`}
-      onClick={async () => {
-        if (await writeClipboard(value)) {
-          setCopied(true)
-          clearTimeout(timer.current)
-          timer.current = setTimeout(() => setCopied(false), 1500)
-        }
+      className={`btn ghost small copy-btn ${className}`.trim()}
+      onClick={async (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const ok = await writeClipboard(value)
+        if (!ok) return
+        setCopied(true)
+        clearTimeout(timer.current)
+        timer.current = setTimeout(() => setCopied(false), 1500)
       }}
       aria-label={copied ? 'Copied' : label}
+      title={copied ? 'Copied' : label}
     >
       {copied ? 'Copied' : label}
     </button>

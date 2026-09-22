@@ -24,3 +24,7 @@ Thumbs.db
 .cursor/
 .claude/
 .playwright-mcp/
+# Google Platform Tools (downloaded by scripts/ensure_platform_tools.py)
+tools/platform-tools/
+tools/platform-tools.zip
+!tools/.gitkeep
