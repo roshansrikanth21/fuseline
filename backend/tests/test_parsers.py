@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from builders import (
     BASE,
+    adb_usagestats_dump,
     app_usage_csv,
     app_usage_db,
     chromium_db,
@@ -18,6 +19,7 @@ from builders import (
     takeout,
 )
 
+from app.parsers.adb_usagestats import AdbUsageStatsParser
 from app.parsers.app_usage import AppUsageParser
 from app.parsers.base import ParseContext
 from app.parsers.chrome_history import ChromiumHistoryParser, decode_transition
@@ -371,3 +373,57 @@ def test_plaso_jsonlines_microsecond_timestamps(tmp_path: Path):
 def test_takeout_json_is_not_mistaken_for_plaso(tmp_path: Path):
     path = takeout(tmp_path / "Records.json", [(12.9, 77.5, "2024-06-15T10:00:00Z")])
     assert detect_parser(path).name == "location"
+
+
+# --- adb usagestats dump ------------------------------------------------------------------------
+
+
+def test_adb_usagestats_dump_is_detected_by_content(tmp_path: Path):
+    path = tmp_path / "dumpsys.txt"
+    path.write_text(adb_usagestats_dump([("com.whatsapp", "MOVE_TO_FOREGROUND", BASE)]), encoding="utf-8")
+    assert AdbUsageStatsParser().sniff(path) > 0.8
+    assert detect_parser(path).name == "adb_usagestats_dump"
+
+
+def test_adb_usagestats_dump_parses_events_and_extra_fields(tmp_path: Path):
+    path = tmp_path / "dumpsys.txt"
+    text = adb_usagestats_dump(
+        [
+            ("com.whatsapp", "MOVE_TO_FOREGROUND", BASE),
+            ("com.whatsapp", "MOVE_TO_BACKGROUND", BASE + timedelta(minutes=2)),
+            ("com.android.chrome", "MOVE_TO_FOREGROUND", BASE + timedelta(minutes=3)),
+        ]
+    )
+    path.write_text(text, encoding="utf-8")
+    result = AdbUsageStatsParser().parse(path, UTC_CTX)
+    assert len(result.records) == 3 and result.skipped == 0
+    first = result.records[0]
+    assert first.package == "com.whatsapp" and first.event_type == "move_to_foreground"
+    assert first.ts_utc == "2024-06-15T10:00:00.000Z"
+    assert first.detail["type"] == "MOVE_TO_FOREGROUND" and first.detail["instanceId"] == "7"
+
+
+def test_adb_usagestats_dump_stops_at_the_next_section(tmp_path: Path):
+    path = tmp_path / "dumpsys.txt"
+    text = adb_usagestats_dump([("com.a", "MOVE_TO_FOREGROUND", BASE)]) + '    time="bogus" type=X package=com.b\n'
+    path.write_text(text, encoding="utf-8")
+    result = AdbUsageStatsParser().parse(path, UTC_CTX)
+    assert len(result.records) == 1  # the line after configStatsService: is not in the events block
+
+
+def test_adb_usagestats_dump_skips_unparseable_lines(tmp_path: Path):
+    path = tmp_path / "dumpsys.txt"
+    text = (
+        "Usage Events:\n    garbled line with no fields\n"
+        + adb_usagestats_dump([("com.a", "MOVE_TO_FOREGROUND", BASE)], preamble=False).split("Usage Events:\n", 1)[1]
+    )
+    path.write_text(text, encoding="utf-8")
+    result = AdbUsageStatsParser().parse(path, UTC_CTX)
+    assert len(result.records) == 1 and result.skipped == 1
+
+
+def test_adb_usagestats_dump_uses_case_timezone_for_naive_times(tmp_path: Path):
+    path = tmp_path / "dumpsys.txt"
+    path.write_text(adb_usagestats_dump([("com.a", "MOVE_TO_FOREGROUND", BASE)]), encoding="utf-8")
+    (event,) = AdbUsageStatsParser().parse(path, NY_CTX).records
+    assert event.ts_utc == "2024-06-15T14:00:00.000Z" and event.ts_basis == "assumed"

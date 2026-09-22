@@ -183,6 +183,13 @@ class IntegrityResult(BaseModel):
     audit_first_bad_entry: int | None = None
 
 
+class DeviceInfo(BaseModel):
+    serial: str
+    state: str
+    model: str | None = None
+    ready: bool
+
+
 class FormatInfo(BaseModel):
     source: str
     parser: str

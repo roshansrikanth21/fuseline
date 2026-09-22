@@ -154,3 +154,23 @@ def plaso_csv(path: Path, rows: list[dict[str, str]]) -> Path:
 def plaso_jsonl(path: Path, records: list[dict]) -> Path:
     path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
     return path
+
+
+def adb_usagestats_dump(events: list[tuple[str, str, datetime]], *, preamble: bool = True) -> str:
+    """Synthetic `adb shell dumpsys usagestats` text. ``events`` are (package, TYPE, when)."""
+    lines = []
+    if preamble:
+        lines += [
+            "componentUsageStatsService:",
+            "  package stats:",
+            '    package: "com.whatsapp"',
+            "      totalTimeUsed=1h23m",
+            "",
+        ]
+    lines.append("  Usage Events:")
+    for package, event_type, when in events:
+        ts = when.strftime("%Y-%m-%d %H:%M:%S")
+        lines.append(f'    time="{ts}" type={event_type} package={package} class=.MainActivity instanceId=7')
+    lines.append("configStatsService:")  # a following, unrelated section should end the block
+    lines.append("  nothing to see here")
+    return "\n".join(lines) + "\n"

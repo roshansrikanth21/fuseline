@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from app.parsers.adb_usagestats import AdbUsageStatsParser
 from app.parsers.app_usage import AppUsageParser
 from app.parsers.base import ArtifactParser, ParseContext, ParseResult
 from app.parsers.chrome_history import ChromiumHistoryParser
@@ -14,6 +15,7 @@ PARSERS: list[ArtifactParser] = [
     ChromiumHistoryParser(),
     FirefoxPlacesParser(),
     AppUsageParser(),
+    AdbUsageStatsParser(),
     LocationParser(),
     PlasoParser(),
 ]
@@ -24,6 +26,11 @@ SUPPORTED_FORMATS = [
     {"source": "browsing", "parser": "chromium_history", "label": "Chromium / Chrome / Edge History (SQLite)"},
     {"source": "browsing", "parser": "firefox_places", "label": "Firefox / Fenix places.sqlite"},
     {"source": "app_usage", "parser": "android_app_usage", "label": "Android UsageStats (SQLite, CSV or XML)"},
+    {
+        "source": "app_usage",
+        "parser": "adb_usagestats_dump",
+        "label": "adb shell dumpsys usagestats (live device pull)",
+    },
     {
         "source": "location",
         "parser": "location",

@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { type Artifact, type Finding, type IngestResult, type IntegrityResult, type Meta, api } from '../api/client'
 import { Callout } from '../components/Callout'
-import { CopyButton } from '../components/CopyButton'
+import { DeviceUsagePanel } from '../components/DeviceUsagePanel'
 import { FindingsTable } from '../components/FindingsTable'
 import { NoCase } from '../components/NoCase'
+import { SourceCard } from '../components/SourceCard'
 import { SourceChip } from '../components/SourceChip'
 import { formatBytes, formatCount } from '../lib/format'
-import { formatDateTime } from '../lib/time'
+import { SOURCES } from '../lib/sources'
 import { useCase } from '../state/CaseContext'
 
 const HINTS = [
@@ -17,6 +18,13 @@ const HINTS = [
   { value: 'location', label: 'Location' },
   { value: 'plaso', label: 'Plaso timeline' },
 ]
+
+const SOURCE_META: Record<(typeof SOURCES)[number], { label: string; help: string }> = {
+  location: { label: 'Location', help: 'CSV, SQLite, GPX, or a Google Takeout Records.json export' },
+  browsing: { label: 'Browsing', help: 'Chromium/Edge History or Firefox places.sqlite' },
+  app_usage: { label: 'App usage', help: 'Android UsageStats — SQLite, CSV, XML, or a live device pull' },
+  plaso: { label: 'Plaso', help: 'Optional, for a full forensic image — psort L2TCSV or JSON lines' },
+}
 
 type QueueItem = {
   id: string
@@ -38,8 +46,9 @@ function Acquire({ caseId, onChanged }: { caseId: string; onChanged: () => Promi
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [findings, setFindings] = useState<Finding[]>([])
   const [meta, setMeta] = useState<Meta | null>(null)
-  const [hint, setHint] = useState('auto')
-  const [dragOver, setDragOver] = useState(false)
+  const [bulkHint, setBulkHint] = useState('auto')
+  const [dragOverCard, setDragOverCard] = useState<string | null>(null)
+  const [bulkDragOver, setBulkDragOver] = useState(false)
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [demoBusy, setDemoBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
@@ -95,7 +104,7 @@ function Acquire({ caseId, onChanged }: { caseId: string; onChanged: () => Promi
     }
   }, [caseId, refresh, onChanged])
 
-  function enqueue(files: File[]) {
+  function enqueue(files: File[], hint: string) {
     if (files.length === 0) return
     setMessage(null)
     setError(null)
@@ -160,81 +169,76 @@ function Acquire({ caseId, onChanged }: { caseId: string; onChanged: () => Promi
     }
   }
 
-  const integrityById = new Map(integrity?.artifacts.map((a) => [a.artifact_id, a.status]) ?? [])
+  const byCategory = useMemo(() => {
+    const map = new Map<string, Artifact[]>()
+    for (const s of SOURCES) map.set(s, [])
+    for (const a of artifacts) (map.get(a.source_type) ?? map.set(a.source_type, []).get(a.source_type)!).push(a)
+    return map
+  }, [artifacts])
+
+  const integrityBySource = useMemo(
+    () => new Map(integrity?.artifacts.map((a) => [a.artifact_id, a.status]) ?? []),
+    [integrity],
+  )
+
   const busy = queue.some((q) => q.status === 'uploading' || q.status === 'queued') || demoBusy
 
   return (
     <div className="stack">
       <section className="panel">
-        <h1>Acquire</h1>
-        <p className="muted">
-          Add evidence files. Each is hashed (SHA-256), stored read-only, parsed, and normalised to UTC. Files are
-          recognised by their <strong>content</strong>, never their name.
-        </p>
-
-        <div className="row wrap-gap">
-          <label className="inline-field">
-            Source hint
-            <select value={hint} onChange={(e) => setHint(e.target.value)} disabled={busy}>
-              {HINTS.map((h) => (
-                <option key={h.value} value={h.value}>
-                  {h.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button type="button" className="btn accent" disabled={busy} onClick={() => void loadDemo()}>
+        <div className="panel-head">
+          <div>
+            <h1>Acquire</h1>
+            <p className="muted small">
+              Each file is hashed (SHA-256), stored read-only, and recognised by its <strong>content</strong> —
+              never its name.
+            </p>
+          </div>
+          <button type="button" className="btn accent small" disabled={busy} onClick={() => void loadDemo()}>
             {demoBusy ? 'Loading…' : 'Load sample evidence'}
           </button>
         </div>
 
-        <div
-          className={`dropzone${dragOver ? ' active' : ''}`}
-          onDragOver={(e) => {
-            e.preventDefault()
-            setDragOver(true)
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
-            e.preventDefault()
-            setDragOver(false)
-            enqueue(Array.from(e.dataTransfer.files))
-          }}
-        >
-          <p>
-            <strong>Drop artifacts here</strong>, or
-          </p>
-          <label className="btn secondary file-btn">
-            Choose files…
-            <input
-              type="file"
-              multiple
-              onChange={(e) => {
-                enqueue(Array.from(e.target.files ?? []))
-                e.target.value = ''
-              }}
-            />
-          </label>
-          {meta ? (
-            <p className="muted small">Up to {formatBytes(meta.max_upload_bytes)} per file. Multiple files upload one at a time.</p>
-          ) : null}
-        </div>
-
-        {meta ? (
-          <details className="formats">
-            <summary>Supported formats</summary>
-            <ul>
-              {meta.formats.map((f) => (
-                <li key={f.parser}>
-                  <SourceChip source={f.source} /> {f.label}
-                </li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
-
         {message ? <Callout tone="pass">{message}</Callout> : null}
         {error ? <div className="error-box">{error}</div> : null}
+
+        <div className="source-grid">
+          {SOURCES.map((source) => {
+            const meta_ = SOURCE_META[source]
+            const list = byCategory.get(source) ?? []
+            return (
+              <SourceCard
+                key={source}
+                source={source}
+                label={meta_.label}
+                help={meta_.help}
+                artifacts={list}
+                totalEvents={list.reduce((n, a) => n + a.row_count, 0)}
+                integrityBySource={integrityBySource}
+                dragOver={dragOverCard === source}
+                onDragOver={() => setDragOverCard(source)}
+                onDragLeave={() => setDragOverCard(null)}
+                onDrop={(files) => {
+                  setDragOverCard(null)
+                  enqueue(files.slice(0, 1), source)
+                }}
+                onChoose={(files) => enqueue(files.slice(0, 1), source)}
+                disabled={busy}
+              >
+                {source === 'app_usage' ? (
+                  <DeviceUsagePanel
+                    caseId={caseId}
+                    onImported={() => {
+                      setIntegrity(null)
+                      void refresh()
+                      void onChanged()
+                    }}
+                  />
+                ) : null}
+              </SourceCard>
+            )
+          })}
+        </div>
 
         {queue.length > 0 ? (
           <ul className="queue" aria-label="Upload results">
@@ -256,14 +260,57 @@ function Acquire({ caseId, onChanged }: { caseId: string; onChanged: () => Promi
             ))}
           </ul>
         ) : null}
+
+        <details className="formats">
+          <summary>Advanced: bulk upload / unusual files</summary>
+          <div className="row wrap-gap" style={{ marginTop: '0.6rem' }}>
+            <label className="inline-field">
+              Source hint
+              <select value={bulkHint} onChange={(e) => setBulkHint(e.target.value)} disabled={busy}>
+                {HINTS.map((h) => (
+                  <option key={h.value} value={h.value}>
+                    {h.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div
+            className={`dropzone${bulkDragOver ? ' active' : ''}`}
+            style={{ marginTop: '0.6rem' }}
+            onDragOver={(e) => {
+              e.preventDefault()
+              setBulkDragOver(true)
+            }}
+            onDragLeave={() => setBulkDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setBulkDragOver(false)
+              enqueue(Array.from(e.dataTransfer.files), bulkHint)
+            }}
+          >
+            <p>
+              <strong>Drop any number of files here</strong>, or
+            </p>
+            <label className="btn secondary file-btn">
+              Choose files…
+              <input
+                type="file"
+                multiple
+                onChange={(e) => {
+                  enqueue(Array.from(e.target.files ?? []), bulkHint)
+                  e.target.value = ''
+                }}
+              />
+            </label>
+            {meta ? <p className="muted small">Up to {formatBytes(meta.max_upload_bytes)} per file.</p> : null}
+          </div>
+        </details>
       </section>
 
       <section className="panel">
         <div className="panel-head">
-          <div>
-            <h2>Artifact inventory</h2>
-            <p className="muted small">Hashes are recorded at acquisition; verification re-hashes the stored copies.</p>
-          </div>
+          <h2>Integrity</h2>
           <button
             type="button"
             className="btn secondary small"
@@ -273,75 +320,24 @@ function Acquire({ caseId, onChanged }: { caseId: string; onChanged: () => Promi
             {verifying ? 'Verifying…' : 'Verify integrity'}
           </button>
         </div>
-
         {integrity ? (
           integrity.ok ? (
             <Callout tone="pass" title="Integrity verified">
-              All {integrity.artifacts.length} stored artifacts match the hashes recorded at acquisition, and the audit
-              chain is intact.
+              All {integrity.artifacts.length} stored artifacts match the hashes recorded at acquisition, and the
+              audit chain is intact.
             </Callout>
           ) : (
             <Callout tone="fail" title="Integrity check failed">
               {integrity.artifacts.filter((a) => a.status !== 'ok').length > 0
                 ? 'One or more stored evidence copies no longer match their recorded hash. '
                 : ''}
-              {!integrity.audit_chain_ok ? `The audit log was altered (first bad entry #${integrity.audit_first_bad_entry}).` : ''}
+              {!integrity.audit_chain_ok
+                ? `The audit log was altered (first bad entry #${integrity.audit_first_bad_entry}).`
+                : ''}
             </Callout>
           )
-        ) : null}
-
-        {artifacts.length === 0 ? (
-          <div className="empty">No artifacts yet.</div>
         ) : (
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th scope="col">Artifact</th>
-                  <th scope="col">Type</th>
-                  <th scope="col" className="num">
-                    Events
-                  </th>
-                  <th scope="col" className="num">
-                    Skipped
-                  </th>
-                  <th scope="col">SHA-256</th>
-                  <th scope="col">Acquired (UTC)</th>
-                  {integrity ? <th scope="col">Integrity</th> : null}
-                </tr>
-              </thead>
-              <tbody>
-                {artifacts.map((a) => (
-                  <tr key={a.id}>
-                    <td>
-                      <div className="cell-title">{a.original_name}</div>
-                      <div className="cell-sub mono">
-                        {a.parser} · {formatBytes(a.size_bytes)}
-                      </div>
-                    </td>
-                    <td>
-                      <SourceChip source={a.source_type} />
-                    </td>
-                    <td className="num">{formatCount(a.row_count)}</td>
-                    <td className="num" title={a.notes.join('\n')}>
-                      {a.skipped_rows > 0 ? <span className="warn-text">{formatCount(a.skipped_rows)}</span> : 0}
-                    </td>
-                    <td>
-                      <span className="mono hash">{a.sha256}</span> <CopyButton value={a.sha256} />
-                    </td>
-                    <td className="mono nowrap">{formatDateTime(Date.parse(a.ingested_at))}</td>
-                    {integrity ? (
-                      <td>
-                        <span className={`sev sev-${integrityById.get(a.id) === 'ok' ? 'pass' : 'fail'}`}>
-                          {integrityById.get(a.id) ?? '—'}
-                        </span>
-                      </td>
-                    ) : null}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <p className="muted small">Re-hashes every stored evidence copy and checks the audit chain.</p>
         )}
       </section>
 
@@ -376,7 +372,8 @@ function QueueResult({ result }: { result: IngestResult }) {
   if (result.duplicate) {
     return (
       <span className="muted">
-        Already in this case (identical SHA-256 to <strong>{result.artifact.original_name}</strong>) — nothing added.
+        Already in this case (identical SHA-256 to <strong>{result.artifact.original_name}</strong>) — nothing
+        added.
       </span>
     )
   }

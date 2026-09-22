@@ -45,6 +45,7 @@ function Workspace({ caseId, caseTimezone }: { caseId: string; caseTimezone: str
   const [activeSession, setActiveSession] = useState<Session | null>(null)
   const [sessionEvents, setSessionEvents] = useState<TimelineEvent[] | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [sideTab, setSideTab] = useState<'sessions' | 'map'>('sessions')
 
   const timeZone = tzMode === 'case' ? caseTimezone : 'UTC'
   const canSwitchZone = caseTimezone !== 'UTC'
@@ -76,6 +77,7 @@ function Workspace({ caseId, caseTimezone }: { caseId: string; caseTimezone: str
       }
       setActiveSession(session)
       setSessionEvents(null)
+      setSideTab('sessions')
       const a = Date.parse(session.start_utc)
       const b = Date.parse(session.end_utc)
       data.setView(padRange(a, b, 0.6, 60_000))
@@ -295,10 +297,33 @@ function Workspace({ caseId, caseTimezone }: { caseId: string; caseTimezone: str
           </section>
         </div>
 
-        <aside className="stack">
-          <section className="panel">
-            <h2>Proximity sessions</h2>
-            {data.sessions.length === 0 ? (
+        <aside className="panel">
+          <div className="panel-head">
+            <h2 className="sr-only">Sessions and map</h2>
+            <div className="segmented" role="tablist" aria-label="Sessions or map">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sideTab === 'sessions'}
+                className={sideTab === 'sessions' ? 'on' : ''}
+                onClick={() => setSideTab('sessions')}
+              >
+                Sessions{data.sessions.length > 0 ? ` (${data.sessions.length})` : ''}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sideTab === 'map'}
+                className={sideTab === 'map' ? 'on' : ''}
+                onClick={() => setSideTab('map')}
+              >
+                Map
+              </button>
+            </div>
+          </div>
+
+          {sideTab === 'sessions' ? (
+            data.sessions.length === 0 ? (
               <div className="empty compact">
                 No multi-source clusters. Ingest at least two source types, or widen the window under “Correlation…”.
               </div>
@@ -314,10 +339,8 @@ function Workspace({ caseId, caseTimezone }: { caseId: string; caseTimezone: str
                   />
                 ))}
               </div>
-            )}
-          </section>
-          <section className="panel">
-            <h2>Location track</h2>
+            )
+          ) : (
             <MapPanel
               points={points}
               total={data.locations?.total ?? 0}
@@ -327,7 +350,7 @@ function Workspace({ caseId, caseTimezone }: { caseId: string; caseTimezone: str
               onSelectPoint={(id) => void selectById(id)}
               timeZone={timeZone}
             />
-          </section>
+          )}
         </aside>
       </div>
     </div>

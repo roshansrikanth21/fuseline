@@ -145,6 +145,13 @@ export type Meta = {
   formats: { source: string; parser: string; label: string }[]
 }
 
+export type AdbDevice = {
+  serial: string
+  state: string
+  model: string | null
+  ready: boolean
+}
+
 export type ReportSummary = {
   case: Case
   artifacts: Artifact[]
@@ -239,6 +246,11 @@ const json = (method: string, body: unknown): RequestInit => ({
 export const api = {
   health: () => request<{ status: string; version: string }>('/api/health'),
   meta: () => request<Meta>('/api/meta'),
+  devices: () => request<AdbDevice[]>('/api/devices'),
+  pullDeviceAppUsage: (caseId: string, serial: string) =>
+    request<IngestResult>(`/api/cases/${caseId}/acquire/device/${encodeURIComponent(serial)}/app-usage`, {
+      method: 'POST',
+    }),
 
   listCases: () => request<Case[]>('/api/cases'),
   createCase: (body: CaseInput) => request<Case>('/api/cases', json('POST', body)),

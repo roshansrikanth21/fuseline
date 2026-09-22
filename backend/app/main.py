@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from app import __version__
-from app.api import acquire, cases, report, sessions, timeline
+from app.api import acquire, cases, device, report, sessions, timeline
 from app.config import ALLOW_LOOPBACK_ORIGINS, ALLOWED_HOSTS, ALLOWED_ORIGINS, FRONTEND_DIST, MAX_UPLOAD_BYTES
 from app.db import init_registry
 from app.http_security import LOOPBACK_ORIGIN_REGEX, LocalOnlyMiddleware
@@ -54,6 +54,7 @@ app.add_middleware(
 )
 
 app.include_router(cases.router)
+app.include_router(device.router)
 app.include_router(acquire.router)
 app.include_router(timeline.router)
 app.include_router(sessions.router)
