@@ -1,48 +1,76 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from app.parsers.app_usage import AppUsageParser
-from app.parsers.chrome_history import ChromeHistoryParser
+from app.parsers.base import ArtifactParser, ParseContext, ParseResult
+from app.parsers.chrome_history import ChromiumHistoryParser
+from app.parsers.firefox_history import FirefoxPlacesParser
 from app.parsers.location import LocationParser
-from app.parsers.plaso_l2tcsv import PlasoL2TCSVParser
+from app.parsers.plaso_l2tcsv import PlasoParser
 
-PARSERS = [
+PARSERS: list[ArtifactParser] = [
+    ChromiumHistoryParser(),
+    FirefoxPlacesParser(),
     AppUsageParser(),
-    ChromeHistoryParser(),
     LocationParser(),
-    PlasoL2TCSVParser(),
+    PlasoParser(),
 ]
 
 VALID_SOURCES = {p.source for p in PARSERS}
 
+SUPPORTED_FORMATS = [
+    {"source": "browsing", "parser": "chromium_history", "label": "Chromium / Chrome / Edge History (SQLite)"},
+    {"source": "browsing", "parser": "firefox_places", "label": "Firefox / Fenix places.sqlite"},
+    {"source": "app_usage", "parser": "android_app_usage", "label": "Android UsageStats (SQLite, CSV or XML)"},
+    {
+        "source": "location",
+        "parser": "location",
+        "label": "Location fixes (CSV, SQLite, GPX, Google Takeout Records.json)",
+    },
+    {"source": "plaso", "parser": "plaso_timeline", "label": "Plaso psort output (L2TCSV or JSON lines)"},
+]
 
-def detect_parser(path: Path, preferred_source: str | None = None):
-    if preferred_source:
-        if preferred_source not in VALID_SOURCES:
-            raise ValueError(f"Unknown source hint: {preferred_source}")
-        for parser in PARSERS:
-            if parser.source == preferred_source and parser.sniff(path):
-                return parser
-        raise ValueError(
-            f"File does not match source hint '{preferred_source}'. "
-            "Use auto-detect or upload a matching artifact."
-        )
-    for parser in PARSERS:
-        if parser.sniff(path):
-            return parser
-    return None
+NO_MATCH_HELP = (
+    "Supported: Chromium/Firefox history databases, Android UsageStats (SQLite/CSV/XML), "
+    "location data (CSV/SQLite/GPX/Takeout JSON) and Plaso L2TCSV/JSONL."
+)
 
 
-def parse_artifact(path: Path, preferred_source: str | None = None):
+def detect_parser(path: Path, preferred_source: str | None = None) -> ArtifactParser | None:
+    """Pick the parser whose content sniff is most confident (file names are never trusted)."""
+    if preferred_source and preferred_source not in VALID_SOURCES:
+        raise ValueError(f"Unknown source hint: {preferred_source}")
+    candidates = [p for p in PARSERS if not preferred_source or p.source == preferred_source]
+    scored = [(p.sniff(path), i, p) for i, p in enumerate(candidates)]
+    scored = [item for item in scored if item[0] > 0]
+    if not scored:
+        if preferred_source:
+            raise ValueError(
+                f"File does not match source hint '{preferred_source}'. Use auto-detect or upload a matching artifact."
+            )
+        return None
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return scored[0][2]
+
+
+def parse_artifact(
+    path: Path,
+    preferred_source: str | None = None,
+    ctx: ParseContext | None = None,
+    *,
+    label: str | None = None,
+) -> tuple[ArtifactParser, ParseResult]:
+    """Detect a parser for ``path`` and run it. ``label`` is the name shown in errors (the examiner's
+    file name, not the temporary path the upload happens to sit at)."""
+    ctx = ctx or ParseContext()
+    name = label or path.name
     parser = detect_parser(path, preferred_source)
     if parser is None:
-        raise ValueError(
-            f"No parser matched for {path.name}. "
-            "Provide app_usage DB/CSV, Chromium History, location CSV/DB, or Plaso L2TCSV."
-        )
+        raise ValueError(f"No parser recognised the contents of {name}. {NO_MATCH_HELP}")
     try:
-        records = parser.parse(path)
-    except Exception as exc:
-        raise ValueError(f"Failed to parse {path.name}: {exc}") from exc
-    return parser, records
+        result = parser.parse(path, ctx)
+    except (sqlite3.Error, OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"Failed to parse {name} as {parser.name}: {exc}") from exc
+    return parser, result

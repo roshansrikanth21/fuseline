@@ -1,37 +1,29 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import re
 
 from app.parsers.base import EventRecord
+from app.timeutil import parse_utc, to_epoch_ms, to_iso_utc
 
+__all__ = ["normalize_record", "normalize_records", "parse_utc", "to_iso_utc"]
 
-def parse_utc(ts: str) -> datetime:
-    text = ts.strip()
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    dt = datetime.fromisoformat(text)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-
-def to_iso_utc(dt: datetime) -> str:
-    dt = dt.astimezone(timezone.utc)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+# Control characters and bidirectional overrides let hostile evidence spoof what an
+# examiner sees (e.g. right-to-left override making "exe.txt" read as "txt.exe").
+_DISPLAY_UNSAFE = re.compile("[\x00-\x1f\x7f‎‏‪-‮⁦-⁩]")
 
 
 def normalize_record(record: EventRecord, case_timezone: str = "UTC") -> EventRecord:
-    """Ensure ts_utc is canonical ISO-8601 Zulu; retain original."""
-    try:
-        dt = parse_utc(record.ts_utc)
-        record.ts_utc = to_iso_utc(dt)
-    except ValueError:
-        # Leave as-is; validation will flag
-        pass
+    """Canonicalise ``ts_utc`` (ms-precision ISO-8601 Zulu) and tidy display fields.
+
+    Raises ``ValueError`` if ``ts_utc`` is not a parseable timestamp.
+    """
+    dt = parse_utc(record.ts_utc)
+    record.ts_utc = to_iso_utc(dt)
+    record.ts_ms = to_epoch_ms(dt)
     if not record.tz_assumed:
-        record.tz_assumed = case_timezone or "UTC"
+        record.tz_assumed = "UTC"
     if record.title:
-        record.title = record.title.strip()[:300]
+        record.title = _DISPLAY_UNSAFE.sub(" ", record.title).strip()[:300] or "(untitled)"
     if record.domain:
         record.domain = record.domain.lower()
     if record.package:
@@ -40,4 +32,11 @@ def normalize_record(record: EventRecord, case_timezone: str = "UTC") -> EventRe
 
 
 def normalize_records(records: list[EventRecord], case_timezone: str = "UTC") -> list[EventRecord]:
-    return [normalize_record(r, case_timezone) for r in records]
+    """Normalise every record, dropping any whose timestamp cannot be parsed."""
+    out: list[EventRecord] = []
+    for record in records:
+        try:
+            out.append(normalize_record(record, case_timezone))
+        except ValueError:
+            continue
+    return out

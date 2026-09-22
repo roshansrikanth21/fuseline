@@ -11,6 +11,8 @@ export type Case = {
   session_count: number
 }
 
+export type CaseInput = { name: string; examiner: string; timezone: string; notes: string }
+
 export type Artifact = {
   id: string
   source_type: string
@@ -18,14 +20,22 @@ export type Artifact = {
   sha256: string
   ingested_at: string
   row_count: number
+  size_bytes: number
+  skipped_rows: number
+  parser: string
+  notes: string[]
 }
+
+export type TimeBasis = 'absolute' | 'offset' | 'assumed'
 
 export type TimelineEvent = {
   id: string
   artifact_id: string
   ts_utc: string
+  ts_ms: number
   ts_original: string
   tz_assumed: string
+  ts_basis: TimeBasis
   source: string
   event_type: string
   title: string
@@ -46,11 +56,21 @@ export type Session = {
   summary: string
   member_event_ids: string[]
   sources: string[]
+  event_count: number
+  centroid_lat: number | null
+  centroid_lon: number | null
+  radius_m: number | null
+}
+
+export type CorrelationParams = {
+  window_seconds: number
+  max_span_seconds: number
+  min_sources: number
 }
 
 export type Finding = {
   id: string
-  severity: string
+  severity: 'pass' | 'warn' | 'fail' | 'info' | string
   code: string
   message: string
   created_at: string
@@ -60,7 +80,69 @@ export type TimelineResponse = {
   case_id: string
   events: TimelineEvent[]
   total: number
+  offset: number
+  limit: number
+  has_more: boolean
   sources: Record<string, number>
+}
+
+export type Overview = {
+  origin_ms: number
+  bucket_ms: number
+  bucket_count: number
+  total: number
+  series: Record<string, [number, number][]>
+}
+
+export type LocationPoint = { id: string; ts_ms: number; lat: number; lon: number }
+export type LocationsResponse = { points: LocationPoint[]; total: number; returned: number }
+
+export type IngestResult = {
+  artifact: Artifact
+  events_added: number
+  sessions_rebuilt: number
+  findings: Finding[]
+  duplicate: boolean
+}
+
+export type DemoResult = {
+  artifacts: Artifact[]
+  events_added: number
+  sessions_rebuilt: number
+  findings: Finding[]
+}
+
+export type AuditEntry = {
+  id: number
+  ts: string
+  case_id: string | null
+  actor: string
+  action: string
+  detail: Record<string, unknown>
+  prev_hash: string
+  entry_hash: string
+}
+
+export type ArtifactIntegrity = {
+  artifact_id: string
+  original_name: string
+  expected_sha256: string
+  actual_sha256: string | null
+  status: 'ok' | 'modified' | 'missing'
+}
+
+export type IntegrityResult = {
+  ok: boolean
+  checked_at: string
+  artifacts: ArtifactIntegrity[]
+  audit_chain_ok: boolean
+  audit_first_bad_entry: number | null
+}
+
+export type Meta = {
+  version: string
+  max_upload_bytes: number
+  formats: { source: string; parser: string; label: string }[]
 }
 
 export type ReportSummary = {
@@ -71,72 +153,170 @@ export type ReportSummary = {
   session_count: number
   findings: Finding[]
   sessions: Session[]
-  sample_events: TimelineEvent[]
+  correlation: CorrelationParams
+  audit: AuditEntry[]
+  first_event_utc: string | null
+  last_event_utc: string | null
 }
+
+export type TimelineQuery = {
+  source?: string
+  q?: string
+  start?: number
+  end?: number
+  offset?: number
+  limit?: number
+  order?: 'asc' | 'desc'
+}
+
+export class ApiError extends Error {
+  status: number
+
+  constructor(message: string, status = 0) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
+/** Turn a FastAPI error body (string detail, or a list of validation errors) into one readable line. */
+export function extractDetail(body: unknown, fallback: string): string {
+  const detail = (body as { detail?: unknown } | null)?.detail
+  if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((d) => {
+        const item = d as { msg?: string; loc?: unknown[] }
+        const field = Array.isArray(item.loc) ? item.loc.filter((p) => p !== 'body').join('.') : ''
+        const msg = (item.msg ?? '').replace(/^Value error, /, '')
+        return field ? `${field}: ${msg}` : msg
+      })
+      .filter(Boolean)
+    if (parts.length) return parts.join('; ')
+  }
+  return fallback
+}
+
+const UNREACHABLE = 'Cannot reach the Fuseline API. Is the backend running on :8000?'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
     res = await fetch(path, init)
-  } catch {
-    throw new Error('Cannot reach Fuseline API. Is the backend running on :8000?')
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err
+    throw new ApiError(UNREACHABLE)
   }
   if (!res.ok) {
-    let detail = res.statusText
+    let body: unknown = null
     try {
-      const body = await res.json()
-      if (body?.detail) {
-        detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail)
-      }
+      body = await res.json()
     } catch {
-      /* ignore */
+      /* non-JSON error body */
     }
-    throw new Error(detail || `Request failed (${res.status})`)
+    throw new ApiError(extractDetail(body, res.statusText || `Request failed (${res.status})`), res.status)
   }
-  if (res.status === 204) {
-    return undefined as T
-  }
-  return res.json() as Promise<T>
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
 }
 
+function qs(params: Record<string, string | number | boolean | undefined | null>): string {
+  const q = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
+  }
+  const text = q.toString()
+  return text ? `?${text}` : ''
+}
+
+const iso = (ms: number | undefined) => (ms === undefined ? undefined : new Date(ms).toISOString())
+const json = (method: string, body: unknown): RequestInit => ({
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+})
+
 export const api = {
-  health: () => request<{ status: string }>('/api/health'),
+  health: () => request<{ status: string; version: string }>('/api/health'),
+  meta: () => request<Meta>('/api/meta'),
+
   listCases: () => request<Case[]>('/api/cases'),
-  createCase: (body: { name: string; examiner: string; timezone: string; notes: string }) =>
-    request<Case>('/api/cases', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+  createCase: (body: CaseInput) => request<Case>('/api/cases', json('POST', body)),
   getCase: (id: string) => request<Case>(`/api/cases/${id}`),
+  updateCase: (id: string, body: Partial<CaseInput>) => request<Case>(`/api/cases/${id}`, json('PATCH', body)),
   deleteCase: (id: string) => request<void>(`/api/cases/${id}`, { method: 'DELETE' }),
+
   listArtifacts: (id: string) => request<Artifact[]>(`/api/cases/${id}/artifacts`),
-  loadDemo: (id: string) =>
-    request<{
-      artifacts: Artifact[]
-      events_added: number
-      sessions_rebuilt: number
-      findings: Finding[]
-    }>(`/api/cases/${id}/acquire/demo`, { method: 'POST' }),
-  upload: async (id: string, file: File, sourceHint: string) => {
-    const form = new FormData()
-    form.append('file', file)
-    form.append('source_hint', sourceHint)
-    return request<{
-      artifact: Artifact
-      events_added: number
-      sessions_rebuilt: number
-      findings: Finding[]
-    }>(`/api/cases/${id}/acquire`, { method: 'POST', body: form })
-  },
-  timeline: (id: string, params?: { source?: string; q?: string }) => {
-    const qs = new URLSearchParams()
-    if (params?.source) qs.set('source', params.source)
-    if (params?.q) qs.set('q', params.q)
-    const suffix = qs.toString() ? `?${qs}` : ''
-    return request<TimelineResponse>(`/api/cases/${id}/timeline${suffix}`)
-  },
+  loadDemo: (id: string) => request<DemoResult>(`/api/cases/${id}/acquire/demo`, { method: 'POST' }),
+  verify: (id: string) => request<IntegrityResult>(`/api/cases/${id}/verify`, { method: 'POST' }),
+  audit: (id: string) => request<AuditEntry[]>(`/api/cases/${id}/audit`),
+
+  upload: (id: string, file: File, sourceHint: string, onProgress?: (fraction: number) => void) =>
+    new Promise<IngestResult>((resolve, reject) => {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('source_hint', sourceHint)
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', `/api/cases/${id}/acquire`)
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress?.(e.loaded / e.total)
+      }
+      xhr.onerror = () => reject(new ApiError(UNREACHABLE))
+      xhr.onload = () => {
+        let body: unknown = null
+        try {
+          body = JSON.parse(xhr.responseText)
+        } catch {
+          /* non-JSON body */
+        }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(body as IngestResult)
+        else reject(new ApiError(extractDetail(body, xhr.statusText || `Upload failed (${xhr.status})`), xhr.status))
+      }
+      xhr.send(form)
+    }),
+
+  timeline: (id: string, q: TimelineQuery = {}, signal?: AbortSignal) =>
+    request<TimelineResponse>(
+      `/api/cases/${id}/timeline${qs({
+        source: q.source,
+        q: q.q,
+        start: iso(q.start),
+        end: iso(q.end),
+        offset: q.offset,
+        limit: q.limit,
+        order: q.order,
+      })}`,
+      { signal },
+    ),
+  event: (id: string, eventId: string) => request<TimelineEvent>(`/api/cases/${id}/events/${eventId}`),
+  overview: (
+    id: string,
+    q: { source?: string; q?: string; start?: number; end?: number; buckets?: number } = {},
+    signal?: AbortSignal,
+  ) =>
+    request<Overview>(
+      `/api/cases/${id}/overview${qs({
+        source: q.source,
+        q: q.q,
+        start: iso(q.start),
+        end: iso(q.end),
+        buckets: q.buckets,
+      })}`,
+      { signal },
+    ),
+  locations: (id: string, q: { start?: number; end?: number; maxPoints?: number } = {}, signal?: AbortSignal) =>
+    request<LocationsResponse>(
+      `/api/cases/${id}/locations${qs({ start: iso(q.start), end: iso(q.end), max_points: q.maxPoints })}`,
+      { signal },
+    ),
+
   sessions: (id: string) => request<Session[]>(`/api/cases/${id}/sessions`),
+  sessionEvents: (id: string, sessionId: string) =>
+    request<TimelineEvent[]>(`/api/cases/${id}/sessions/${sessionId}/events`),
+  correlationParams: (id: string) => request<CorrelationParams>(`/api/cases/${id}/sessions/params`),
+  rebuildSessions: (id: string, p: CorrelationParams) =>
+    request<Session[]>(`/api/cases/${id}/sessions/rebuild${qs({ ...p })}`, { method: 'POST' }),
+
   validation: (id: string, refresh = false) =>
     request<Finding[]>(`/api/cases/${id}/validation${refresh ? '?refresh=true' : ''}`),
   report: (id: string) => request<ReportSummary>(`/api/cases/${id}/report`),

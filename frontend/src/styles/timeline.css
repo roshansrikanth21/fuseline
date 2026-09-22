@@ -1,0 +1,415 @@
+/* ---------- Timeline workspace ---------- */
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 390px;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .workspace-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.chart-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.chart-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.5rem;
+}
+
+/* Overview brush */
+.brush {
+  position: relative;
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.brush svg {
+  display: block;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.brush-bg {
+  fill: var(--surface-2);
+  stroke: var(--line);
+}
+
+.brush-shade {
+  fill: var(--paper);
+  opacity: 0.7;
+}
+
+.brush-window {
+  fill: var(--amber);
+  fill-opacity: 0.1;
+  stroke: var(--amber);
+  stroke-width: 1.5;
+}
+
+.brush-window.full {
+  fill-opacity: 0;
+  stroke-dasharray: 4 3;
+}
+
+.brush-handle {
+  fill: var(--amber);
+}
+
+.brush-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.7rem !important;
+  margin-top: 0.15rem;
+}
+
+.brush-caption span:nth-child(2) {
+  text-align: center;
+  flex: 1;
+}
+
+@media (max-width: 720px) {
+  .brush-caption span:nth-child(2) {
+    display: none;
+  }
+}
+
+/* Main chart */
+.chart {
+  position: relative;
+  min-width: 0;
+  overflow-x: clip;
+  user-select: none;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.chart:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+.chart-svg {
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+.chart-svg:active {
+  cursor: grabbing;
+}
+
+.chart .grid {
+  stroke: var(--line);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+
+.chart .grid.major {
+  stroke: var(--line-strong);
+  opacity: 1;
+}
+
+.tick-label {
+  fill: var(--muted);
+  font: 500 10.5px var(--font-mono);
+}
+
+.tick-label.major {
+  fill: var(--ink);
+  font-weight: 600;
+}
+
+.lane-bg {
+  fill: var(--surface-2);
+  stroke: var(--line);
+}
+
+.lane-label {
+  fill: var(--ink);
+  font: 600 11px var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.lane-count {
+  fill: var(--muted);
+  font: 10px var(--font-mono);
+}
+
+.session-band {
+  fill: var(--amber);
+  opacity: 0.13;
+}
+
+.session-band.active {
+  opacity: 0.28;
+  stroke: var(--amber);
+  stroke-width: 1;
+}
+
+.cursor-line {
+  stroke: var(--amber);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.cursor-chip {
+  fill: var(--ink);
+}
+
+.cursor-text {
+  fill: var(--paper);
+  font: 500 10px var(--font-mono);
+}
+
+.mark-halo {
+  stroke: var(--amber);
+  opacity: 0.35;
+}
+
+.chart-tip {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+  max-width: 260px;
+  background: var(--ink);
+  color: var(--paper);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.chart-tip .muted {
+  color: color-mix(in srgb, var(--paper) 70%, transparent);
+}
+
+.tip-head {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.8;
+}
+
+.tip-title {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+/* Map */
+.map {
+  position: relative;
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.map svg {
+  display: block;
+  border: 1px solid var(--line);
+  cursor: crosshair;
+  max-width: 100%;
+}
+
+.map-bg {
+  fill: var(--surface-2);
+}
+
+.map-grid {
+  stroke: var(--line);
+  stroke-dasharray: 2 4;
+}
+
+.map-grid-label {
+  fill: var(--muted);
+  font: 9.5px var(--font-mono);
+}
+
+.map-track {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+
+.map-point {
+  stroke: var(--surface-2);
+  stroke-width: 1;
+}
+
+.map-point.lit {
+  stroke: var(--amber);
+  stroke-width: 2;
+}
+
+.map-point.selected {
+  stroke: var(--ink);
+  stroke-width: 2.5;
+}
+
+.map-point.dim {
+  opacity: 0.3;
+}
+
+.map-session {
+  fill: var(--amber);
+  fill-opacity: 0.12;
+  stroke: var(--amber);
+  stroke-dasharray: 4 3;
+}
+
+.map-north {
+  fill: var(--muted);
+  font: 600 10px var(--font-mono);
+}
+
+.map-scale {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+
+.map-scale-label {
+  fill: var(--ink);
+  font: 500 10px var(--font-mono);
+}
+
+.map-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.map-legend .mono {
+  font-size: 0.68rem;
+}
+
+.map-ramp {
+  flex: 1;
+  height: 6px;
+  background: linear-gradient(90deg, var(--map-a), var(--map-b));
+}
+
+/* Drawer */
+.drawer {
+  min-width: 0;
+}
+
+.empty-drawer {
+  color: var(--muted);
+  padding: 0.5rem 0;
+}
+
+.drawer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.drawer-title {
+  margin: 0.5rem 0 0.6rem;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.kv-list {
+  margin: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.kv dt {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.url-text {
+  word-break: break-all;
+}
+
+.raw {
+  margin-top: 0.75rem;
+}
+
+.raw summary {
+  cursor: pointer;
+  color: var(--teal);
+  font-size: 0.85rem;
+}
+
+/* Sessions */
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 460px;
+  overflow: auto;
+  padding-right: 0.25rem;
+}
+
+.session-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  padding: 0.6rem 0.7rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.session-card:hover,
+.session-card.active {
+  border-color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.session-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.session-card .score {
+  font-family: var(--font-mono);
+  color: var(--amber-text);
+  font-size: 0.75rem;
+}
+
+.session-summary {
+  margin: 0.3rem 0;
+  overflow-wrap: anywhere;
+}
+
+.session-time {
+  margin-top: 0.35rem;
+  font-size: 0.72rem !important;
+}

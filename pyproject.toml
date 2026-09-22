@@ -1,23 +1,49 @@
 [project]
 name = "fuseline"
-version = "1.0.0"
+version = "1.1.0"
 description = "Mobile forensic timeline builder — correlate location, browsing, and app usage"
 readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
 dependencies = [
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.32.0",
   "python-multipart>=0.0.12",
   "pydantic>=2.9.0",
   "jinja2>=3.1.4",
+  "defusedxml>=0.7.1",
+  "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3.0", "httpx>=0.27.0"]
+dev = ["pytest>=8.3.0", "httpx>=0.27.0", "ruff>=0.6.0", "mypy>=1.11.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 pythonpath = ["backend"]
+filterwarnings = [
+  "ignore:Using .httpx. with .starlette.testclient.*",
+  "ignore:The anyio.abc.BlockingPortal alias is deprecated.*",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["backend"]
+extend-exclude = ["frontend", "samples", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["B008", "RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/tests/*" = ["B", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+files = ["backend/app"]
 
 [build-system]
 requires = ["setuptools>=68"]

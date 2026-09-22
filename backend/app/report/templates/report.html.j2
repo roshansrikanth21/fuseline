@@ -2,79 +2,120 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="generator" content="Fuseline {{ version }}" />
   <title>Fuseline Report — {{ case.name }}</title>
   <style>
     :root {
-      --ink: #1a1f24;
-      --muted: #5c6670;
-      --paper: #f4f6f8;
-      --amber: #c45c16;
-      --line: #d5dbe3;
+      --ink: #1a1f24; --muted: #5c6670; --paper: #f4f6f8; --amber: #c45c16; --line: #d5dbe3;
+      --pass: #1f6b3a; --fail: #9b1c1c;
     }
-    body {
-      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-      color: var(--ink);
-      background: var(--paper);
-      margin: 0;
-      padding: 2rem;
-      line-height: 1.45;
-    }
-    h1, h2 { font-weight: 600; letter-spacing: -0.02em; }
-    h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
-    .meta { color: var(--muted); font-family: "IBM Plex Mono", Consolas, monospace; font-size: 0.85rem; }
+    * { box-sizing: border-box; }
+    body { font-family: "IBM Plex Sans", "Segoe UI", sans-serif; color: var(--ink); background: var(--paper);
+           margin: 0; padding: 2rem; line-height: 1.45; }
+    main { max-width: 1100px; margin: 0 auto; }
+    h1, h2, h3 { font-weight: 600; letter-spacing: -0.02em; }
+    h1 { font-size: 1.75rem; margin: 0 0 .25rem; }
+    h2 { font-size: 1.15rem; margin: 0 0 .75rem; }
+    h3 { font-size: .95rem; margin: 0; }
+    .meta { color: var(--muted); font-family: "IBM Plex Mono", Consolas, monospace; font-size: .82rem; }
     section { background: #fff; border: 1px solid var(--line); padding: 1.25rem 1.5rem; margin: 1.25rem 0; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-    th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
-    th { color: var(--muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
-    .sev-pass { color: #1f6b3a; }
-    .sev-warn { color: var(--amber); }
-    .sev-fail { color: #9b1c1c; }
-    .sev-info { color: var(--muted); }
-    .mono { font-family: "IBM Plex Mono", Consolas, monospace; font-size: 0.8rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; }
+    .sev-pass { color: var(--pass); } .sev-warn { color: var(--amber); } .sev-fail { color: var(--fail); } .sev-info { color: var(--muted); }
+    .mono { font-family: "IBM Plex Mono", Consolas, monospace; font-size: .78rem; word-break: break-all; }
+    .muted { color: var(--muted); }
+    .stats { display: flex; gap: 2rem; flex-wrap: wrap; }
+    .stat b { display: block; font-size: 1.5rem; letter-spacing: -.03em; }
+    .stat span { font-family: "IBM Plex Mono", Consolas, monospace; font-size: .7rem; color: var(--muted); text-transform: uppercase; }
+    .chip { display: inline-block; font-family: "IBM Plex Mono", Consolas, monospace; font-size: .7rem; padding: .1rem .4rem;
+            border: 1px solid var(--line); text-transform: uppercase; margin-right: .25rem; }
+    details { border: 1px solid var(--line); margin: .5rem 0; padding: .5rem .75rem; }
+    summary { cursor: pointer; }
+    svg { width: 100%; height: auto; display: block; }
+    .note { font-size: .82rem; color: var(--muted); margin: .5rem 0 0; }
     @media print {
       body { background: #fff; padding: 0; }
       section { break-inside: avoid; }
+      details { break-inside: avoid; }
+      details > * { display: block; }
     }
   </style>
 </head>
 <body>
+<main>
   <header>
     <h1>Fuseline Forensic Report</h1>
-    <div class="meta">{{ case.name }} · examiner {{ case.examiner or "—" }} · TZ {{ case.timezone }} · case {{ case.id }}</div>
+    <div class="meta">
+      {{ case.name }} · examiner {{ case.examiner or "—" }} · case timezone {{ case.timezone }}<br />
+      case {{ case.id }} · generated {{ generated_at }} · Fuseline {{ version }}
+    </div>
   </header>
+
+  {% if case.notes %}
+  <section>
+    <h2>Examiner notes</h2>
+    <p style="white-space: pre-wrap">{{ case.notes }}</p>
+  </section>
+  {% endif %}
 
   <section>
     <h2>Summary</h2>
-    <p>{{ event_count }} events · {{ artifacts|length }} artifacts · {{ session_count }} proximity sessions</p>
-    <p>Sources:
+    <div class="stats">
+      <div class="stat"><b>{{ "{:,}".format(event_count) }}</b><span>events</span></div>
+      <div class="stat"><b>{{ artifacts|length }}</b><span>artifacts</span></div>
+      <div class="stat"><b>{{ session_count }}</b><span>proximity sessions</span></div>
+    </div>
+    <p>
       {% for src, count in source_counts.items() %}
-        <strong>{{ src }}</strong> ({{ count }}){% if not loop.last %}, {% endif %}
-      {% else %}
-        none
-      {% endfor %}
+        <span class="chip">{{ src }}</span>{{ "{:,}".format(count) }}{% if not loop.last %} &nbsp; {% endif %}
+      {% else %}none{% endfor %}
     </p>
+    {% if first_event_utc %}
+    <p class="meta">Evidence spans {{ first_event_utc }} → {{ last_event_utc }} (UTC)</p>
+    {% endif %}
+    <p class="meta">Events CSV SHA-256 (as exported alongside this report): {{ csv_sha256 }}</p>
   </section>
 
+  {% if chart.lanes %}
   <section>
-    <h2>Acquisition — Artifact Inventory</h2>
+    <h2>Activity overview</h2>
+    <svg viewBox="0 0 {{ chart.width }} {{ chart.height + 20 }}" role="img" aria-label="Event density per source over time">
+      {% for lane in chart.lanes %}
+      <text x="0" y="{{ lane.y + lane.h / 2 + 4 }}" font-size="11" font-family="monospace" fill="#5c6670">{{ lane.source }}</text>
+      <line x1="{{ chart.left }}" x2="{{ chart.width - 8 }}" y1="{{ lane.y + lane.h }}" y2="{{ lane.y + lane.h }}" stroke="#d5dbe3" />
+      {% for b in lane.bars %}
+      <rect x="{{ b.x }}" y="{{ lane.y + lane.h - b.h }}" width="{{ b.w }}" height="{{ b.h }}" fill="{{ lane.color }}" />
+      {% endfor %}
+      {% endfor %}
+      <text x="{{ chart.left }}" y="{{ chart.height + 14 }}" font-size="10" font-family="monospace" fill="#5c6670">{{ chart.start }}</text>
+      <text x="{{ chart.width - 8 }}" y="{{ chart.height + 14 }}" font-size="10" font-family="monospace" text-anchor="end" fill="#5c6670">{{ chart.end }}</text>
+    </svg>
+  </section>
+  {% endif %}
+
+  <section>
+    <h2>Acquisition — artifact inventory</h2>
     <table>
-      <thead>
-        <tr><th>Name</th><th>Type</th><th>SHA-256</th><th>Rows</th><th>Ingested</th></tr>
-      </thead>
+      <thead><tr><th>Name</th><th>Type / parser</th><th>SHA-256</th><th>Size</th><th>Events</th><th>Skipped</th><th>Ingested (UTC)</th></tr></thead>
       <tbody>
         {% for a in artifacts %}
         <tr>
           <td>{{ a.original_name }}</td>
-          <td>{{ a.source_type }}</td>
+          <td>{{ a.source_type }}<br /><span class="muted">{{ a.parser }}</span></td>
           <td class="mono">{{ a.sha256 }}</td>
+          <td>{{ a.size_bytes|filesizeformat }}</td>
           <td>{{ a.row_count }}</td>
+          <td>{{ a.skipped_rows }}{% for n in a.notes %}<br /><span class="muted">{{ n }}</span>{% endfor %}</td>
           <td class="mono">{{ a.ingested_at }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="5">No artifacts ingested.</td></tr>
+        <tr><td colspan="7">No artifacts ingested.</td></tr>
         {% endfor %}
       </tbody>
     </table>
+    <p class="note">Evidence copies are stored read-only. Re-hash them at any time with the case's "Verify integrity" action.</p>
   </section>
 
   <section>
@@ -83,11 +124,7 @@
       <thead><tr><th>Severity</th><th>Code</th><th>Message</th></tr></thead>
       <tbody>
         {% for f in findings %}
-        <tr>
-          <td class="sev-{{ f.severity }}">{{ f.severity }}</td>
-          <td class="mono">{{ f.code }}</td>
-          <td>{{ f.message }}</td>
-        </tr>
+        <tr><td class="sev-{{ f.severity }}">{{ f.severity }}</td><td class="mono">{{ f.code }}</td><td>{{ f.message }}</td></tr>
         {% else %}
         <tr><td colspan="3">No validation findings yet.</td></tr>
         {% endfor %}
@@ -96,49 +133,85 @@
   </section>
 
   <section>
-    <h2>Proximity Sessions</h2>
+    <h2>Proximity sessions</h2>
+    <p class="muted">
+      Events are chained into a session while each is within <b>{{ correlation.window_seconds }} s</b> of the previous
+      one; a session needs at least <b>{{ correlation.min_sources }}</b> distinct sources and is capped at
+      <b>{{ correlation.max_span_seconds }} s</b>.
+      {% if sessions|length > session_limit %}Showing the top {{ session_limit }} of {{ sessions|length }} by score.{% endif %}
+    </p>
+    {% for s in sessions[:session_limit] %}
+    <details>
+      <summary>
+        <span class="mono">score {{ "%.2f"|format(s.score) }}</span> ·
+        {% for src in s.sources %}<span class="chip">{{ src }}</span>{% endfor %}
+        {{ s.summary }}
+      </summary>
+      <p class="meta">{{ s.start_utc }} → {{ s.end_utc }} · {{ s.event_count }} events
+        {% if s.radius_m is not none %}· location spread ±{{ "%.0f"|format(s.radius_m) }} m{% endif %}</p>
+      <table>
+        <thead><tr><th>UTC</th><th>Source</th><th>Event</th></tr></thead>
+        <tbody>
+          {% for e in session_events[s.id] %}
+          <tr><td class="mono">{{ e.ts_utc }}</td><td>{{ e.source }}</td><td>{{ e.title }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    {% else %}
+    <p>No multi-source sessions detected.</p>
+    {% endfor %}
+  </section>
+
+  <section>
+    <h2>Timeline (first {{ timeline_events|length }} of {{ "{:,}".format(event_count) }})</h2>
     <table>
-      <thead><tr><th>Score</th><th>Window</th><th>Sources</th><th>Summary</th></tr></thead>
+      <thead><tr><th>UTC</th><th>Source</th><th>Title</th><th>Time basis</th></tr></thead>
       <tbody>
-        {% for s in sessions %}
+        {% for e in timeline_events %}
         <tr>
-          <td>{{ s.score }}</td>
-          <td class="mono">{{ s.start_utc }} → {{ s.end_utc }}</td>
-          <td>{{ s.sources|join(", ") }}</td>
-          <td>{{ s.summary }}</td>
+          <td class="mono">{{ e.ts_utc }}</td><td>{{ e.source }}</td><td>{{ e.title }}</td>
+          <td class="muted">{{ e.ts_basis }}{% if e.ts_basis == "assumed" %} ({{ e.tz_assumed }}){% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if event_count > timeline_events|length %}
+    <p class="note">The complete event list is in the CSV and JSON exports.</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Chain of custody — audit trail</h2>
+    <table>
+      <thead><tr><th>#</th><th>UTC</th><th>Actor</th><th>Action</th><th>Detail</th><th>Entry hash</th></tr></thead>
+      <tbody>
+        {% for a in audit %}
+        <tr>
+          <td>{{ a.id }}</td><td class="mono">{{ a.ts }}</td><td>{{ a.actor or "—" }}</td><td class="mono">{{ a.action }}</td>
+          <td class="mono">{% for k, v in a.detail.items() %}{{ k }}={{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+          <td class="mono">{{ a.entry_hash[:16] }}…</td>
         </tr>
         {% else %}
-        <tr><td colspan="4">No multi-source sessions detected.</td></tr>
+        <tr><td colspan="6">No audit entries.</td></tr>
         {% endfor %}
       </tbody>
     </table>
+    <p class="note">Each entry commits to the hash of the one before it; editing or deleting an entry breaks the chain.</p>
   </section>
 
   <section>
-    <h2>Sample Timeline (first 50)</h2>
-    <table>
-      <thead><tr><th>UTC</th><th>Source</th><th>Title</th></tr></thead>
-      <tbody>
-        {% for e in sample_events %}
-        <tr>
-          <td class="mono">{{ e.ts_utc }}</td>
-          <td>{{ e.source }}</td>
-          <td>{{ e.title }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
-
-  <section>
-    <h2>Methodology</h2>
+    <h2>Methodology and limitations</h2>
     <ol>
-      <li><strong>Acquisition</strong> — artifacts hashed (SHA-256) and stored with provenance.</li>
-      <li><strong>Analysis</strong> — timestamps normalized to UTC; events merged from location, browsing, and app usage (plus optional Plaso L2TCSV).</li>
-      <li><strong>Validation</strong> — source coverage, timestamp parseability, gaps, and hash inventory checked.</li>
-      <li><strong>Correlation</strong> — proximity sessions group ≥2 distinct sources within a configurable time window.</li>
-      <li><strong>Report</strong> — this document plus CSV/JSON exports for examiner handoff.</li>
+      <li><strong>Acquisition</strong> — every artifact is SHA-256 hashed on receipt and stored read-only with its provenance.</li>
+      <li><strong>Normalisation</strong> — timestamps are converted to UTC. Epoch values and offsets are exact; timestamps with no
+          zone information are interpreted in the case timezone ({{ case.timezone }}) and flagged as <em>assumed</em>.</li>
+      <li><strong>Validation</strong> — source coverage, hash inventory, skipped rows, time gaps, cross-source overlap and implausible dates are checked.</li>
+      <li><strong>Correlation</strong> — proximity sessions show that events from different sources occurred close in time. They indicate
+          <em>temporal coincidence</em>, not causation; corroborate before drawing conclusions.</li>
+      <li><strong>Report</strong> — this document plus CSV/JSON exports. CSV cells that could execute as spreadsheet formulas are prefixed with an apostrophe; the JSON export is unmodified.</li>
     </ol>
   </section>
+</main>
 </body>
 </html>

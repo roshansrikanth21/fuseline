@@ -1,79 +1,60 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+import hashlib
+
+from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
+from app import audit
 from app.api.deps import require_case_id
 from app.models import (
     ArtifactOut,
+    AuditEntryOut,
     CaseOut,
-    EventOut,
+    CorrelationParamsIn,
     ReportSummary,
     SessionOut,
     ValidationFindingOut,
 )
-from app.report.build import export_events_csv, export_events_json, gather_report_data, render_html_report
+from app.pipeline.ingest import get_case
+from app.report.build import (
+    export_events_csv,
+    export_events_json,
+    gather_report_data,
+    render_html_report,
+)
 
 router = APIRouter(prefix="/api/cases/{case_id}/report", tags=["report"])
+
+# The report is evidence-derived HTML: forbid scripts, network access and framing outright.
+REPORT_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"
+
+
+def _record_export(case_id: str, kind: str, content: str, actor: str) -> None:
+    audit.record(
+        "report.export",
+        case_id=case_id,
+        actor=actor,
+        detail={"kind": kind, "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(), "bytes": len(content)},
+    )
 
 
 @router.get("", response_model=ReportSummary)
 def report_summary(case_id: str) -> ReportSummary:
     case_id = require_case_id(case_id)
-    try:
-        data = gather_report_data(case_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
+    data = gather_report_data(case_id)
     return ReportSummary(
         case=CaseOut(**data["case"]),
-        artifacts=[
-            ArtifactOut(
-                id=a["id"],
-                source_type=a["source_type"],
-                original_name=a["original_name"],
-                sha256=a["sha256"],
-                ingested_at=a["ingested_at"],
-                row_count=a["row_count"],
-            )
-            for a in data["artifacts"]
-        ],
+        artifacts=[ArtifactOut(**a) for a in data["artifacts"]],
         event_count=data["event_count"],
         source_counts=data["source_counts"],
         session_count=data["session_count"],
         findings=[ValidationFindingOut(**f) for f in data["findings"]],
-        sessions=[
-            SessionOut(
-                id=s["id"],
-                start_utc=s["start_utc"],
-                end_utc=s["end_utc"],
-                score=s["score"],
-                summary=s["summary"],
-                member_event_ids=s["member_event_ids"],
-                sources=s["sources"],
-            )
-            for s in data["sessions"]
-        ],
-        sample_events=[
-            EventOut(
-                id=e["id"],
-                artifact_id=e["artifact_id"],
-                ts_utc=e["ts_utc"],
-                ts_original=e["ts_original"],
-                tz_assumed=e["tz_assumed"],
-                source=e["source"],
-                event_type=e["event_type"],
-                title=e["title"],
-                detail=e.get("detail") or {},
-                lat=e.get("lat"),
-                lon=e.get("lon"),
-                package=e.get("package"),
-                url=e.get("url"),
-                domain=e.get("domain"),
-                confidence=e.get("confidence", 1.0),
-            )
-            for e in data["sample_events"]
-        ],
+        sessions=[SessionOut(**s) for s in data["sessions"]],
+        correlation=CorrelationParamsIn(**data["correlation"]),
+        audit=[AuditEntryOut(**a) for a in data["audit"]],
+        first_event_utc=data["first_event_utc"],
+        last_event_utc=data["last_event_utc"],
     )
 
 
@@ -81,13 +62,15 @@ def report_summary(case_id: str) -> ReportSummary:
 def report_html(case_id: str) -> HTMLResponse:
     case_id = require_case_id(case_id)
     html = render_html_report(case_id)
-    return HTMLResponse(content=html)
+    _record_export(case_id, "html", html, get_case(case_id)["examiner"])
+    return HTMLResponse(content=html, headers={"Content-Security-Policy": REPORT_CSP})
 
 
 @router.get("/csv")
-def report_csv(case_id: str) -> Response:
+def report_csv(case_id: str, raw: bool = False) -> Response:
     case_id = require_case_id(case_id)
-    content = export_events_csv(case_id)
+    content = export_events_csv(case_id, raw=raw)
+    _record_export(case_id, "csv-raw" if raw else "csv", content, get_case(case_id)["examiner"])
     return Response(
         content=content,
         media_type="text/csv",
@@ -99,6 +82,7 @@ def report_csv(case_id: str) -> Response:
 def report_json(case_id: str) -> PlainTextResponse:
     case_id = require_case_id(case_id)
     content = export_events_json(case_id)
+    _record_export(case_id, "json", content, get_case(case_id)["examiner"])
     return PlainTextResponse(
         content=content,
         media_type="application/json",

@@ -1,8 +1,9 @@
-type Props = {
-  source: string
-}
+import { SOURCE_LABEL, isSource } from '../lib/sources'
 
-export function SourceChip({ source }: Props) {
-  const cls = ['badge', source.replace(/\s+/g, '_')].join(' ')
-  return <span className={cls}>{source}</span>
+export function SourceChip({ source }: { source: string }) {
+  return (
+    <span className={`badge ${isSource(source) ? source : 'plaso'}`} title={source}>
+      {SOURCE_LABEL[source] ?? source}
+    </span>
+  )
 }

@@ -1,16 +1,26 @@
-# Start Fuseline API + Vite UI (Windows)
+# Start the Fuseline API (auto-reload, :8000) and the Vite dev UI (:5173) on Windows.
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
-if (-not (Test-Path ".\.venv\Scripts\python.exe")) {
-  Write-Host "Creating venv..."
-  python -m venv .venv
-  .\.venv\Scripts\pip install -r requirements.txt
+$VenvPython = ".\.venv\Scripts\python.exe"
+
+if (-not (Test-Path $VenvPython)) {
+  Write-Host "Creating virtual environment..."
+  $launcher = @("py", "python", "python3") | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+  if (-not $launcher) { throw "Python 3.11+ was not found on PATH." }
+  & $launcher -m venv .venv
+  if ($LASTEXITCODE -ne 0) { throw "Could not create the virtual environment." }
 }
 
+& $VenvPython -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"
+if ($LASTEXITCODE -ne 0) { throw "Fuseline needs Python 3.11 or newer (found $(& $VenvPython --version))." }
+
+& $VenvPython -m pip install -q -r requirements-dev.txt
+if ($LASTEXITCODE -ne 0) { throw "Installing Python dependencies failed." }
+
 if (-not (Test-Path ".\samples\demo_case\app_usage.db")) {
-  .\.venv\Scripts\python .\scripts\seed_demo.py
+  & $VenvPython .\scripts\seed_demo.py
 }
 
 if (-not (Test-Path ".\frontend\node_modules")) {
@@ -19,9 +29,10 @@ if (-not (Test-Path ".\frontend\node_modules")) {
   Pop-Location
 }
 
-Write-Host "Starting API on :8000 and UI on :5173 ..."
-$api = Start-Process -PassThru -NoNewWindow -FilePath ".\.venv\Scripts\python.exe" -ArgumentList @(
-  "-m", "uvicorn", "app.main:app", "--reload", "--host", "127.0.0.1", "--port", "8000", "--app-dir", "backend"
+Write-Host "Starting API on http://127.0.0.1:8000 and UI on http://127.0.0.1:5173 (Ctrl+C to stop)..."
+$api = Start-Process -PassThru -NoNewWindow -FilePath $VenvPython -ArgumentList @(
+  "-m", "uvicorn", "app.main:app", "--reload", "--reload-dir", "backend",
+  "--host", "127.0.0.1", "--port", "8000", "--app-dir", "backend"
 )
 Push-Location frontend
 try {

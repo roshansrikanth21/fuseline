@@ -1,18 +1,39 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints, field_validator
+
+from app.timeutil import canonical_timezone_name
 
 SourceType = Literal["location", "browsing", "app_usage", "plaso"]
 Severity = Literal["pass", "warn", "fail", "info"]
 
+Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+Examiner = Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)]
+Notes = Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)]
+
+
+def _check_timezone(value: str | None) -> str | None:
+    return None if value is None else canonical_timezone_name(value)
+
 
 class CaseCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    examiner: str = Field(default="", max_length=200)
+    name: Name
+    examiner: Examiner = ""
     timezone: str = Field(default="UTC", max_length=64)
-    notes: str = Field(default="", max_length=4000)
+    notes: Notes = ""
+
+    _tz = field_validator("timezone")(_check_timezone)
+
+
+class CaseUpdate(BaseModel):
+    name: Name | None = None
+    examiner: Examiner | None = None
+    timezone: str | None = Field(default=None, max_length=64)
+    notes: Notes | None = None
+
+    _tz = field_validator("timezone")(_check_timezone)
 
 
 class CaseOut(BaseModel):
@@ -35,14 +56,20 @@ class ArtifactOut(BaseModel):
     sha256: str
     ingested_at: str
     row_count: int
+    size_bytes: int = 0
+    skipped_rows: int = 0
+    parser: str = ""
+    notes: list[str] = Field(default_factory=list)
 
 
 class EventOut(BaseModel):
     id: str
     artifact_id: str
     ts_utc: str
+    ts_ms: int = 0
     ts_original: str
     tz_assumed: str
+    ts_basis: str = "absolute"
     source: str
     event_type: str
     title: str
@@ -63,6 +90,16 @@ class SessionOut(BaseModel):
     summary: str
     member_event_ids: list[str]
     sources: list[str]
+    event_count: int = 0
+    centroid_lat: float | None = None
+    centroid_lon: float | None = None
+    radius_m: float | None = None
+
+
+class CorrelationParamsIn(BaseModel):
+    window_seconds: int = Field(default=300, ge=1, le=3600)
+    max_span_seconds: int = Field(default=1800, ge=30, le=86_400)
+    min_sources: int = Field(default=2, ge=1, le=4)
 
 
 class ValidationFindingOut(BaseModel):
@@ -77,7 +114,31 @@ class TimelineResponse(BaseModel):
     case_id: str
     events: list[EventOut]
     total: int
+    offset: int = 0
+    limit: int = 0
+    has_more: bool = False
     sources: dict[str, int]
+
+
+class OverviewResponse(BaseModel):
+    origin_ms: int
+    bucket_ms: int
+    bucket_count: int
+    total: int
+    series: dict[str, list[tuple[int, int]]]
+
+
+class LocationPoint(BaseModel):
+    id: str
+    ts_ms: int
+    lat: float
+    lon: float
+
+
+class LocationsResponse(BaseModel):
+    points: list[LocationPoint]
+    total: int
+    returned: int
 
 
 class IngestResult(BaseModel):
@@ -85,6 +146,7 @@ class IngestResult(BaseModel):
     events_added: int
     sessions_rebuilt: int
     findings: list[ValidationFindingOut]
+    duplicate: bool = False
 
 
 class DemoLoadResult(BaseModel):
@@ -92,6 +154,45 @@ class DemoLoadResult(BaseModel):
     events_added: int
     sessions_rebuilt: int
     findings: list[ValidationFindingOut]
+
+
+class AuditEntryOut(BaseModel):
+    id: int
+    ts: str
+    case_id: str | None = None
+    actor: str = ""
+    action: str
+    detail: dict[str, Any] = Field(default_factory=dict)
+    prev_hash: str
+    entry_hash: str
+
+
+class ArtifactIntegrity(BaseModel):
+    artifact_id: str
+    original_name: str
+    expected_sha256: str
+    actual_sha256: str | None = None
+    status: Literal["ok", "modified", "missing"]
+
+
+class IntegrityResult(BaseModel):
+    ok: bool
+    checked_at: str
+    artifacts: list[ArtifactIntegrity]
+    audit_chain_ok: bool
+    audit_first_bad_entry: int | None = None
+
+
+class FormatInfo(BaseModel):
+    source: str
+    parser: str
+    label: str
+
+
+class MetaOut(BaseModel):
+    version: str
+    max_upload_bytes: int
+    formats: list[FormatInfo]
 
 
 class ReportSummary(BaseModel):
@@ -102,4 +203,7 @@ class ReportSummary(BaseModel):
     session_count: int
     findings: list[ValidationFindingOut]
     sessions: list[SessionOut]
-    sample_events: list[EventOut]
+    correlation: CorrelationParamsIn
+    audit: list[AuditEntryOut]
+    first_event_utc: str | None = None
+    last_event_utc: str | None = None

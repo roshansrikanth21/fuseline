@@ -1,45 +1,113 @@
-import type { TimelineEvent } from '../api/client'
+import type { ReactNode } from 'react'
+import type { Artifact, TimeBasis, TimelineEvent } from '../api/client'
+import { clipJson, defangUrl, shortHash } from '../lib/format'
+import { formatDateTime } from '../lib/time'
+import { CopyButton } from './CopyButton'
 import { SourceChip } from './SourceChip'
 
 type Props = {
   event: TimelineEvent | null
+  artifacts: Artifact[]
+  timeZone: string
   onClose: () => void
 }
 
-export function EventDrawer({ event, onClose }: Props) {
+const BASIS_TEXT: Record<TimeBasis, string> = {
+  absolute: 'Exact — the source stored an absolute time (epoch or UTC).',
+  offset: 'Converted from a timestamp that carried an explicit UTC offset.',
+  assumed: 'Assumed — the source had no timezone, so it was interpreted as local time in',
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="kv">
+      <dt>{label}</dt>
+      <dd>{children}</dd>
+    </div>
+  )
+}
+
+export function EventDrawer({ event, artifacts, timeZone, onClose }: Props) {
   if (!event) {
     return (
-      <div className="drawer muted">Select an event mark on a lane to inspect provenance.</div>
+      <div className="drawer empty-drawer">
+        Select an event — a mark on the chart, a row below, or a point on the map — to inspect its provenance.
+      </div>
     )
   }
 
+  const artifact = artifacts.find((a) => a.id === event.artifact_id)
+  const hasCoords = event.lat !== null && event.lon !== null
+  const coords = hasCoords ? `${event.lat?.toFixed(6)}, ${event.lon?.toFixed(6)}` : ''
+
   return (
-    <div className="drawer">
-      <div className="row" style={{ justifyContent: 'space-between' }}>
+    <div className="drawer" aria-live="polite">
+      <div className="drawer-head">
         <div className="row">
           <SourceChip source={event.source} />
-          <strong>{event.title}</strong>
+          <span className="badge neutral">{event.event_type}</span>
         </div>
-        <button type="button" className="btn secondary" onClick={onClose}>
+        <button type="button" className="btn secondary small" onClick={onClose}>
           Close
         </button>
       </div>
-      <div className="stack" style={{ marginTop: '0.65rem' }}>
-        <div className="mono">UTC {event.ts_utc}</div>
-        <div className="mono muted">original {event.ts_original}</div>
-        {event.package ? <div>package: {event.package}</div> : null}
+      <h3 className="drawer-title">{event.title}</h3>
+
+      <dl className="kv-list">
+        <Field label="UTC">
+          <span className="mono">{formatDateTime(event.ts_ms, 'UTC', true)}</span>
+        </Field>
+        {timeZone !== 'UTC' ? (
+          <Field label={timeZone}>
+            <span className="mono">{formatDateTime(event.ts_ms, timeZone, true)}</span>
+          </Field>
+        ) : null}
+        <Field label="Source value">
+          <span className="mono">{event.ts_original}</span>
+        </Field>
+        <Field label="Time basis">
+          <span className={event.ts_basis === 'assumed' ? 'warn-text' : undefined}>
+            {BASIS_TEXT[event.ts_basis]}
+            {event.ts_basis === 'assumed' ? ` ${event.tz_assumed}.` : ''}
+          </span>
+        </Field>
+        {artifact ? (
+          <Field label="Artifact">
+            <span>{artifact.original_name}</span>
+            <span className="mono muted"> · {artifact.parser} · sha256 {shortHash(artifact.sha256, 10, 6)}</span>
+          </Field>
+        ) : null}
+        {event.package ? (
+          <Field label="Package">
+            <span className="mono">{event.package}</span>
+          </Field>
+        ) : null}
         {event.url ? (
-          <div>
-            url: <a href={event.url}>{event.url}</a>
-          </div>
+          <Field label="URL">
+            <span className="mono url-text" title="Shown inert on purpose: evidence URLs are never made clickable">
+              {defangUrl(event.url)}
+            </span>
+            <CopyButton value={event.url} label="Copy original" />
+          </Field>
         ) : null}
-        {event.lat != null && event.lon != null ? (
-          <div className="mono">
-            lat {event.lat.toFixed(5)}, lon {event.lon.toFixed(5)}
-          </div>
+        {hasCoords ? (
+          <Field label="Position">
+            <span className="mono">{coords}</span>
+            <CopyButton value={coords} />
+          </Field>
         ) : null}
-        <pre>{JSON.stringify(event.detail, null, 2)}</pre>
-      </div>
+        <Field label="Parser confidence">
+          <span className="mono">{event.confidence.toFixed(2)}</span>
+        </Field>
+        <Field label="Event ID">
+          <span className="mono muted">{event.id}</span>
+        </Field>
+      </dl>
+
+      <details className="raw">
+        <summary>Raw parsed record</summary>
+        <pre className="code-block">{clipJson(event.detail)}</pre>
+      </details>
     </div>
   )
 }

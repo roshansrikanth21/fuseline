@@ -2,129 +2,192 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import sqlite3
+import stat
 import uuid
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
-from app.config import SAMPLES_DIR, UPLOADS_DIR
+from app import audit
+from app.config import (
+    DEFAULT_CORRELATION_WINDOW_SECONDS,
+    DEFAULT_MAX_SESSION_SPAN_SECONDS,
+    DEFAULT_MIN_SOURCES,
+    SAMPLES_DIR,
+    UPLOADS_DIR,
+)
 from app.db import case_conn, registry_conn
+from app.parsers.base import ParseContext
 from app.parsers.registry import parse_artifact
 from app.pipeline.correlate import RawEvent, correlate_events
 from app.pipeline.normalize import normalize_records
-from app.pipeline.validate import findings_with_ids, validate_case
-from app.security import assert_safe_case_id, assert_under, sanitize_filename
+from app.pipeline.validate import findings_with_ids, gather_stats, validate_case
+from app.security import READ_CHUNK, assert_safe_case_id, assert_under, sanitize_filename
+from app.timeutil import now_iso
+
+EVENT_NAMESPACE = uuid.UUID("c1a2f5d0-3b7e-4e0a-9c55-2f0f6a3d8e10")
+DEMO_FILES = [
+    ("app_usage.db", "app_usage"),
+    ("History", "browsing"),
+    ("location.csv", "location"),
+    ("plaso_sample.l2t.csv", "plaso"),
+]
 
 
-def _utcnow() -> str:
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+@dataclass
+class CorrelationParams:
+    window_seconds: int = DEFAULT_CORRELATION_WINDOW_SECONDS
+    max_span_seconds: int = DEFAULT_MAX_SESSION_SPAN_SECONDS
+    min_sources: int = DEFAULT_MIN_SOURCES
 
 
-def sha256_file(path: Path) -> str:
+def sha256_file(path: Path) -> tuple[str, int]:
     h = hashlib.sha256()
+    size = 0
     with path.open("rb") as fh:
-        while True:
-            chunk = fh.read(1024 * 1024)
-            if not chunk:
-                break
+        while chunk := fh.read(READ_CHUNK):
             h.update(chunk)
-    return h.hexdigest()
+            size += len(chunk)
+    return h.hexdigest(), size
 
 
-def _refresh_registry_counts(case_id: str) -> None:
+def get_case(case_id: str) -> dict[str, Any]:
+    with registry_conn() as reg:
+        row = reg.execute("SELECT * FROM cases WHERE id = ?", (case_id,)).fetchone()
+    if row is None:
+        raise FileNotFoundError(f"Case not found: {case_id}")
+    return dict(row)
+
+
+def get_correlation_params(conn: sqlite3.Connection) -> CorrelationParams:
+    row = conn.execute("SELECT value FROM meta WHERE key = 'correlation'").fetchone()
+    if row is None:
+        return CorrelationParams()
+    try:
+        return CorrelationParams(**json.loads(row["value"]))
+    except (TypeError, ValueError):
+        return CorrelationParams()
+
+
+def _save_correlation_params(conn: sqlite3.Connection, params: CorrelationParams) -> None:
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('correlation', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (json.dumps(asdict(params)),),
+    )
+
+
+def refresh_registry_counts(case_id: str) -> None:
     with case_conn(case_id) as conn:
-        event_count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
-        artifact_count = conn.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0]
-        session_count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-    now = _utcnow()
+        counts = (
+            conn.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+            conn.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0],
+            conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0],
+        )
     with registry_conn() as reg:
         reg.execute(
-            """
-            UPDATE cases
-            SET event_count=?, artifact_count=?, session_count=?, updated_at=?
-            WHERE id=?
-            """,
-            (event_count, artifact_count, session_count, now, case_id),
+            "UPDATE cases SET event_count=?, artifact_count=?, session_count=?, updated_at=? WHERE id=?",
+            (*counts, now_iso(), case_id),
         )
 
 
-def rebuild_sessions(case_id: str, window_seconds: int = 300) -> int:
-    with case_conn(case_id) as conn:
-        rows = conn.execute(
-            "SELECT id, ts_utc, source, title, package, domain, lat, lon FROM events"
-        ).fetchall()
-        events = [
-            RawEvent(
-                id=r["id"],
-                ts_utc=r["ts_utc"],
-                source=r["source"],
-                title=r["title"],
-                package=r["package"],
-                domain=r["domain"],
-                lat=r["lat"],
-                lon=r["lon"],
+def rebuild_sessions_conn(conn: sqlite3.Connection, params: CorrelationParams | None = None) -> int:
+    params = params or get_correlation_params(conn)
+    rows = conn.execute("SELECT id, ts_utc, ts_ms, source, title, package, domain, lat, lon FROM events").fetchall()
+    events = [
+        RawEvent(
+            id=r["id"],
+            ts_utc=r["ts_utc"],
+            source=r["source"],
+            title=r["title"],
+            package=r["package"],
+            domain=r["domain"],
+            lat=r["lat"],
+            lon=r["lon"],
+            ts_ms=r["ts_ms"],
+        )
+        for r in rows
+    ]
+    sessions = correlate_events(
+        events,
+        window_seconds=params.window_seconds,
+        max_span_seconds=params.max_span_seconds,
+        min_sources=params.min_sources,
+    )
+    conn.execute("DELETE FROM sessions")
+    conn.executemany(
+        """
+        INSERT INTO sessions (id, start_utc, end_utc, score, summary, member_event_ids, sources,
+                              event_count, centroid_lat, centroid_lon, radius_m)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                s.id,
+                s.start_utc,
+                s.end_utc,
+                s.score,
+                s.summary,
+                json.dumps(s.member_event_ids),
+                json.dumps(s.sources),
+                s.event_count,
+                s.centroid_lat,
+                s.centroid_lon,
+                s.radius_m,
             )
-            for r in rows
-        ]
-        sessions = correlate_events(events, window_seconds=window_seconds)
-        conn.execute("DELETE FROM sessions")
-        for s in sessions:
-            conn.execute(
-                """
-                INSERT INTO sessions (id, start_utc, end_utc, score, summary, member_event_ids, sources)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    s.id,
-                    s.start_utc,
-                    s.end_utc,
-                    s.score,
-                    s.summary,
-                    json.dumps(s.member_event_ids),
-                    json.dumps(s.sources),
-                ),
-            )
-    _refresh_registry_counts(case_id)
+            for s in sessions
+        ],
+    )
+    _save_correlation_params(conn, params)
     return len(sessions)
 
 
-def run_validation(case_id: str, events_added: int | None = None) -> list[dict]:
-    with case_conn(case_id) as conn:
-        hashes = [r[0] for r in conn.execute("SELECT sha256 FROM artifacts").fetchall()]
-        timestamps = [r[0] for r in conn.execute("SELECT ts_utc FROM events").fetchall()]
-        source_rows = conn.execute(
-            "SELECT source, COUNT(*) FROM events GROUP BY source"
-        ).fetchall()
-        source_counts = {r[0]: r[1] for r in source_rows}
-        total_events = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
-        findings = validate_case(
-            artifact_hashes=hashes,
-            event_timestamps=timestamps,
-            source_counts=source_counts,
-            events_added=total_events if events_added is None else events_added,
-        )
-        if events_added is None and total_events > 0:
-            findings = validate_case(
-                artifact_hashes=hashes,
-                event_timestamps=timestamps,
-                source_counts=source_counts,
-                events_added=total_events,
-            )
-        created = _utcnow()
-        rows = findings_with_ids(findings, created)
-        conn.execute("DELETE FROM validation_findings")
-        for row in rows:
-            conn.execute(
-                """
-                INSERT INTO validation_findings (id, severity, code, message, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (row["id"], row["severity"], row["code"], row["message"], row["created_at"]),
-            )
+def run_validation_conn(conn: sqlite3.Connection) -> list[dict]:
+    findings = validate_case(gather_stats(conn))
+    rows = findings_with_ids(findings, now_iso())
+    conn.execute("DELETE FROM validation_findings")
+    conn.executemany(
+        "INSERT INTO validation_findings (id, severity, code, message, created_at) VALUES (?, ?, ?, ?, ?)",
+        [(r["id"], r["severity"], r["code"], r["message"], r["created_at"]) for r in rows],
+    )
     return rows
 
 
-def _artifact_payload(row) -> dict:
+def rebuild_sessions(case_id: str, params: CorrelationParams | None = None, *, actor: str = "") -> int:
+    with case_conn(case_id) as conn:
+        count = rebuild_sessions_conn(conn, params)
+        applied = get_correlation_params(conn)
+        run_validation_conn(conn)
+    refresh_registry_counts(case_id)
+    audit.record(
+        "sessions.rebuild",
+        case_id=case_id,
+        actor=actor,
+        detail={"sessions": count, **asdict(applied)},
+    )
+    return count
+
+
+def run_validation(case_id: str) -> list[dict]:
+    with case_conn(case_id) as conn:
+        return run_validation_conn(conn)
+
+
+def finalize_case(case_id: str) -> tuple[int, list[dict]]:
+    with case_conn(case_id) as conn:
+        sessions_n = rebuild_sessions_conn(conn)
+        findings = run_validation_conn(conn)
+    refresh_registry_counts(case_id)
+    return sessions_n, findings
+
+
+def artifact_payload(row: sqlite3.Row) -> dict[str, Any]:
+    try:
+        notes = json.loads(row["notes"] or "[]")
+    except ValueError:
+        notes = []
     return {
         "id": row["id"],
         "source_type": row["source_type"],
@@ -132,7 +195,34 @@ def _artifact_payload(row) -> dict:
         "sha256": row["sha256"],
         "ingested_at": row["ingested_at"],
         "row_count": row["row_count"],
+        "size_bytes": row["size_bytes"],
+        "skipped_rows": row["skipped_rows"],
+        "parser": row["parser"],
+        "notes": notes,
     }
+
+
+def _store_evidence(case_id: str, artifact_id: str, safe_name: str, src: Path, digest: str) -> Path:
+    case_upload = assert_under(UPLOADS_DIR / case_id, UPLOADS_DIR)
+    case_upload.mkdir(parents=True, exist_ok=True)
+    dest = assert_under(case_upload / f"{artifact_id}_{safe_name}", case_upload)
+    shutil.copyfile(src, dest)
+    try:
+        if sha256_file(dest)[0] != digest:
+            raise OSError("evidence copy does not match the source hash")
+        os.chmod(dest, stat.S_IREAD)
+    except Exception:
+        _discard_evidence(dest)
+        raise
+    return dest
+
+
+def _discard_evidence(path: Path) -> None:
+    try:
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def ingest_file(
@@ -140,118 +230,143 @@ def ingest_file(
     src_path: Path,
     original_name: str,
     preferred_source: str | None = None,
-) -> dict:
+    *,
+    finalize: bool = True,
+) -> dict[str, Any]:
+    """Hash, parse, normalise and store one artifact.
+
+    Parsing happens on the source file *before* anything is written, so a rejected upload
+    leaves no orphan copy behind. Storage and the database write then succeed or fail
+    together.
+    """
     case_id = assert_safe_case_id(case_id)
     safe_name = sanitize_filename(original_name)
-
-    case_upload = assert_under(UPLOADS_DIR / case_id, UPLOADS_DIR)
-    case_upload.mkdir(parents=True, exist_ok=True)
-
-    artifact_id = str(uuid.uuid4())
-    dest = assert_under(case_upload / f"{artifact_id}_{safe_name}", case_upload)
-    shutil.copy2(src_path, dest)
-    digest = sha256_file(dest)
+    src_path = Path(src_path)
+    case = get_case(case_id)
+    actor = case["examiner"]
+    digest, size = sha256_file(src_path)
 
     with case_conn(case_id) as conn:
-        existing = conn.execute(
-            "SELECT * FROM artifacts WHERE sha256=?",
-            (digest,),
-        ).fetchone()
-        if existing:
-            try:
-                dest.unlink(missing_ok=True)
-            except OSError:
-                pass
-            sessions_n = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-            findings_rows = conn.execute(
-                "SELECT * FROM validation_findings ORDER BY created_at"
-            ).fetchall()
+        existing = conn.execute("SELECT * FROM artifacts WHERE sha256 = ?", (digest,)).fetchone()
+        if existing is not None:
+            stored = [dict(r) for r in conn.execute("SELECT * FROM validation_findings ORDER BY rowid").fetchall()]
             payload = {
-                "artifact": _artifact_payload(existing),
+                "artifact": artifact_payload(existing),
                 "events_added": 0,
-                "sessions_rebuilt": sessions_n,
-                "findings": [dict(r) for r in findings_rows],
+                "sessions_rebuilt": conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0],
+                "findings": stored,
                 "duplicate": True,
             }
-            # Fall through after releasing the connection if validation is empty
-            if payload["findings"]:
-                return payload
-            need_validation = True
-            cached_payload = payload
-        else:
-            need_validation = False
-            cached_payload = None
-
-    if need_validation and cached_payload is not None:
-        cached_payload["findings"] = run_validation(case_id)
-        return cached_payload
-
-    parser, records = parse_artifact(dest, preferred_source=preferred_source)
-
-    with registry_conn() as reg:
-        row = reg.execute("SELECT timezone FROM cases WHERE id=?", (case_id,)).fetchone()
-        if row is None:
-            raise FileNotFoundError(f"Case not found: {case_id}")
-        tz = row["timezone"] or "UTC"
-
-    records = normalize_records(records, case_timezone=tz)
-    now = _utcnow()
-
-    with case_conn(case_id) as conn:
-        conn.execute(
-            """
-            INSERT INTO artifacts (id, source_type, original_name, stored_path, sha256, ingested_at, row_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                artifact_id,
-                parser.source,
-                safe_name,
-                str(dest),
-                digest,
-                now,
-                len(records),
-            ),
+    if existing is not None:
+        audit.record(
+            "artifact.duplicate",
+            case_id=case_id,
+            actor=actor,
+            detail={"name": safe_name, "sha256": digest, "matches": payload["artifact"]["original_name"]},
         )
-        for rec in records:
+        return payload
+
+    ctx = ParseContext.for_timezone(case["timezone"])
+    parser, parsed = parse_artifact(src_path, preferred_source, ctx, label=safe_name)
+    records = normalize_records(parsed.records)
+    skipped = parsed.skipped + (len(parsed.records) - len(records))
+    notes = parsed.notes()
+    if not records:
+        reasons = f" ({'; '.join(notes)})" if notes else ""
+        raise ValueError(f"{safe_name} was recognised as {parser.name} but contained no usable events{reasons}.")
+
+    artifact_id = str(uuid.uuid4())
+    dest = _store_evidence(case_id, artifact_id, safe_name, src_path, digest)
+    ingested_at = now_iso()
+    sessions_n = 0
+    findings: list[dict] = []
+    try:
+        with case_conn(case_id) as conn:
             conn.execute(
                 """
-                INSERT INTO events (
-                  id, artifact_id, ts_utc, ts_original, tz_assumed, source, event_type,
-                  title, detail_json, lat, lon, package, url, domain, confidence
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO artifacts (id, source_type, original_name, stored_path, sha256, ingested_at,
+                                       row_count, size_bytes, skipped_rows, parser, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    str(uuid.uuid4()),
                     artifact_id,
-                    rec.ts_utc,
-                    rec.ts_original,
-                    rec.tz_assumed,
-                    rec.source,
-                    rec.event_type,
-                    rec.title,
-                    rec.detail_json(),
-                    rec.lat,
-                    rec.lon,
-                    rec.package,
-                    rec.url,
-                    rec.domain,
-                    rec.confidence,
+                    parser.source,
+                    safe_name,
+                    str(dest),
+                    digest,
+                    ingested_at,
+                    len(records),
+                    size,
+                    skipped,
+                    parser.name,
+                    json.dumps(notes),
                 ),
             )
+            conn.executemany(
+                """
+                INSERT INTO events (
+                  id, artifact_id, ts_utc, ts_ms, ts_original, tz_assumed, ts_basis, source, event_type,
+                  title, detail_json, lat, lon, package, url, domain, confidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        str(uuid.uuid5(EVENT_NAMESPACE, f"{digest}:{i}")),
+                        artifact_id,
+                        rec.ts_utc,
+                        rec.ts_ms,
+                        rec.ts_original,
+                        rec.tz_assumed,
+                        rec.ts_basis,
+                        rec.source,
+                        rec.event_type,
+                        rec.title,
+                        rec.detail_json(),
+                        rec.lat,
+                        rec.lon,
+                        rec.package,
+                        rec.url,
+                        rec.domain,
+                        rec.confidence,
+                    )
+                    for i, rec in enumerate(records)
+                ],
+            )
+            if finalize:
+                sessions_n = rebuild_sessions_conn(conn)
+                findings = run_validation_conn(conn)
+    except Exception:
+        _discard_evidence(dest)
+        raise
 
-    sessions_n = rebuild_sessions(case_id)
-    findings = run_validation(case_id, events_added=len(records))
-    _refresh_registry_counts(case_id)
-
+    if finalize:
+        refresh_registry_counts(case_id)
+    audit.record(
+        "artifact.ingest",
+        case_id=case_id,
+        actor=actor,
+        detail={
+            "name": safe_name,
+            "sha256": digest,
+            "size_bytes": size,
+            "parser": parser.name,
+            "source": parser.source,
+            "events": len(records),
+            "skipped_rows": skipped,
+        },
+    )
     return {
         "artifact": {
             "id": artifact_id,
             "source_type": parser.source,
             "original_name": safe_name,
             "sha256": digest,
-            "ingested_at": now,
+            "ingested_at": ingested_at,
             "row_count": len(records),
+            "size_bytes": size,
+            "skipped_rows": skipped,
+            "parser": parser.name,
+            "notes": notes,
         },
         "events_added": len(records),
         "sessions_rebuilt": sessions_n,
@@ -260,46 +375,77 @@ def ingest_file(
     }
 
 
-def load_demo_case(case_id: str) -> dict:
+def load_demo_case(case_id: str) -> dict[str, Any]:
     case_id = assert_safe_case_id(case_id)
     if not SAMPLES_DIR.exists():
-        raise FileNotFoundError(
-            "Sample evidence missing. Run: python scripts/seed_demo.py"
-        )
+        raise FileNotFoundError("Sample evidence missing. Run: python scripts/seed_demo.py")
 
-    mapping = [
-        ("app_usage.db", "app_usage"),
-        ("History", "browsing"),
-        ("location.csv", "location"),
-        ("plaso_sample.l2t.csv", "plaso"),
-    ]
-    artifacts = []
+    artifacts: list[dict] = []
     total_events = 0
-    findings: list[dict] = []
-    sessions_n = 0
-
-    for filename, preferred in mapping:
-        path = SAMPLES_DIR / filename
-        if not path.exists():
-            continue
-        result = ingest_file(case_id, path, filename, preferred_source=preferred)
-        artifacts.append(result["artifact"])
-        total_events += result["events_added"]
-        findings = result["findings"]
-        sessions_n = result["sessions_rebuilt"]
+    try:
+        for filename, hint in DEMO_FILES:
+            path = SAMPLES_DIR / filename
+            if not path.exists():
+                continue
+            result = ingest_file(case_id, path, filename, preferred_source=hint, finalize=False)
+            artifacts.append(result["artifact"])
+            total_events += result["events_added"]
+    finally:
+        sessions_n, findings = finalize_case(case_id)
 
     if not artifacts:
         raise FileNotFoundError(
             "No sample evidence files found under samples/demo_case. Run: python scripts/seed_demo.py"
         )
-
-    # After a full sample load (including skips), refresh validation against the whole case
-    findings = run_validation(case_id)
-    sessions_n = rebuild_sessions(case_id)
-
+    audit.record(
+        "demo.load",
+        case_id=case_id,
+        actor=get_case(case_id)["examiner"],
+        detail={"artifacts": len(artifacts), "events_added": total_events},
+    )
     return {
         "artifacts": artifacts,
         "events_added": total_events,
         "sessions_rebuilt": sessions_n,
         "findings": findings,
     }
+
+
+def verify_case_integrity(case_id: str) -> dict[str, Any]:
+    """Re-hash every stored evidence copy and compare with the hash recorded at acquisition."""
+    case_id = assert_safe_case_id(case_id)
+    with case_conn(case_id) as conn:
+        rows = conn.execute("SELECT * FROM artifacts ORDER BY ingested_at, rowid").fetchall()
+    results = []
+    for row in rows:
+        path = Path(row["stored_path"])
+        if not path.exists():
+            status, actual = "missing", None
+        else:
+            actual = sha256_file(path)[0]
+            status = "ok" if actual == row["sha256"] else "modified"
+        results.append(
+            {
+                "artifact_id": row["id"],
+                "original_name": row["original_name"],
+                "expected_sha256": row["sha256"],
+                "actual_sha256": actual,
+                "status": status,
+            }
+        )
+    chain_ok, first_bad = audit.verify_chain()
+    ok = all(r["status"] == "ok" for r in results) and chain_ok
+    result = {
+        "ok": ok,
+        "checked_at": now_iso(),
+        "artifacts": results,
+        "audit_chain_ok": chain_ok,
+        "audit_first_bad_entry": first_bad,
+    }
+    audit.record(
+        "integrity.verify",
+        case_id=case_id,
+        actor=get_case(case_id)["examiner"],
+        detail={"ok": ok, "artifacts": len(results), "audit_chain_ok": chain_ok},
+    )
+    return result

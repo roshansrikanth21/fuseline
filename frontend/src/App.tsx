@@ -1,111 +1,110 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 import { api } from './api/client'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { useTheme } from './hooks/useTheme'
 import { AcquirePage } from './pages/Acquire'
 import { CasesPage } from './pages/Cases'
 import { ReportPage } from './pages/Report'
 import { TimelinePage } from './pages/Timeline'
+import { useCase } from './state/CaseContext'
 
-const STORAGE_KEY = 'fuseline.activeCase'
+const THEME_LABEL = { system: 'Auto', light: 'Light', dark: 'Dark' } as const
 
 export default function App() {
-  const [activeCaseId, setActiveCaseId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(STORAGE_KEY)
-    } catch {
-      return null
-    }
-  })
-  const [caseLabel, setCaseLabel] = useState<string | null>(null)
+  const { caseId, activeCase } = useCase()
+  const { preference, cycle } = useTheme()
   const [apiOk, setApiOk] = useState<boolean | null>(null)
+  const [version, setVersion] = useState<string | null>(null)
 
-  useEffect(() => {
-    try {
-      if (activeCaseId) localStorage.setItem(STORAGE_KEY, activeCaseId)
-      else localStorage.removeItem(STORAGE_KEY)
-    } catch {
-      /* ignore */
-    }
-  }, [activeCaseId])
-
+  // Probe the backend now, and keep probing every few seconds while it is unreachable.
   useEffect(() => {
     let cancelled = false
-    ;(async () => {
+    let timer: ReturnType<typeof setTimeout>
+    const probe = async () => {
       try {
-        await api.health()
-        if (!cancelled) setApiOk(true)
+        const h = await api.health()
+        if (cancelled) return
+        setApiOk(true)
+        setVersion(h.version)
       } catch {
-        if (!cancelled) setApiOk(false)
+        if (cancelled) return
+        setApiOk(false)
+        timer = setTimeout(probe, 4000)
       }
-    })()
+    }
+    void probe()
     return () => {
       cancelled = true
+      clearTimeout(timer)
     }
   }, [])
 
-  useEffect(() => {
-    if (!activeCaseId) {
-      setCaseLabel(null)
-      return
-    }
-    let cancelled = false
-    ;(async () => {
-      try {
-        const c = await api.getCase(activeCaseId)
-        if (!cancelled) setCaseLabel(c.name)
-      } catch {
-        if (!cancelled) {
-          setCaseLabel(null)
-          setActiveCaseId(null)
-        }
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [activeCaseId])
+  const link = ({ isActive }: { isActive: boolean }) => (isActive ? 'active' : undefined)
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <header className="topbar">
         <div className="brand">
           <div className="brand-name">Fuseline</div>
-          <div className="brand-sub">Mobile forensic timeline</div>
+          <div className="brand-sub">Mobile forensic timeline{version ? ` · v${version}` : ''}</div>
         </div>
-        <nav className="nav">
-          <NavLink to="/" end className={({ isActive }) => (isActive ? 'active' : undefined)}>
-            Cases
+        <nav className="nav" aria-label="Workflow">
+          <NavLink to="/" end className={link}>
+            <span className="step">1</span> Cases
           </NavLink>
-          <NavLink to="/acquire" className={({ isActive }) => (isActive ? 'active' : undefined)}>
-            Acquire
+          <NavLink to="/acquire" className={link}>
+            <span className="step">2</span> Acquire
           </NavLink>
-          <NavLink to="/timeline" className={({ isActive }) => (isActive ? 'active' : undefined)}>
-            Timeline
+          <NavLink to="/timeline" className={link}>
+            <span className="step">3</span> Timeline
           </NavLink>
-          <NavLink to="/report" className={({ isActive }) => (isActive ? 'active' : undefined)}>
-            Report
+          <NavLink to="/report" className={link}>
+            <span className="step">4</span> Report
           </NavLink>
         </nav>
-        <div className="case-chip" title={activeCaseId ?? undefined}>
-          {apiOk === false ? 'API offline' : caseLabel ? `case · ${caseLabel}` : 'no case selected'}
+        <div className="top-actions">
+          <div className="case-chip" title={caseId ?? undefined}>
+            {apiOk === false ? 'API offline' : activeCase ? activeCase.name : 'no case selected'}
+            {activeCase && apiOk !== false ? <span className="muted"> · {activeCase.timezone}</span> : null}
+          </div>
+          <button
+            type="button"
+            className="btn ghost small"
+            onClick={cycle}
+            title="Switch between automatic, light and dark themes"
+          >
+            Theme: {THEME_LABEL[preference]}
+          </button>
         </div>
       </header>
-      <main className="main">
+      <main id="main" className="main">
         {apiOk === false ? (
-          <div className="error-box" style={{ marginBottom: '1rem' }}>
-            Backend unreachable. Start it with <span className="mono">scripts/run_dev.ps1</span> or{' '}
-            <span className="mono">uvicorn app.main:app --reload --app-dir backend</span>.
+          <div className="error-box banner">
+            Backend unreachable — retrying. Start it with <span className="mono">scripts/run_dev.ps1</span> or{' '}
+            <span className="mono">uvicorn app.main:app --app-dir backend</span>.
           </div>
         ) : null}
-        <Routes>
-          <Route
-            path="/"
-            element={<CasesPage activeCaseId={activeCaseId} onSelectCase={setActiveCaseId} />}
-          />
-          <Route path="/acquire" element={<AcquirePage caseId={activeCaseId} />} />
-          <Route path="/timeline" element={<TimelinePage caseId={activeCaseId} />} />
-          <Route path="/report" element={<ReportPage caseId={activeCaseId} />} />
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/" element={<CasesPage />} />
+            <Route path="/acquire" element={<AcquirePage />} />
+            <Route path="/timeline" element={<TimelinePage />} />
+            <Route path="/report" element={<ReportPage />} />
+            <Route
+              path="*"
+              element={
+                <section className="panel">
+                  <h1>Page not found</h1>
+                  <p className="muted">That address does not exist.</p>
+                </section>
+              }
+            />
+          </Routes>
+        </ErrorBoundary>
       </main>
     </div>
   )

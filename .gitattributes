@@ -1,0 +1,13 @@
+* text=auto
+
+# Shell scripts and the Dockerfile must stay LF even on Windows checkouts (CRLF breaks `bash` and Docker).
+*.sh text eol=lf
+Dockerfile text eol=lf
+
+# Evidence fixtures and images are binary.
+samples/demo_case/History binary
+*.db binary
+*.sqlite binary
+*.png binary
+*.woff binary
+*.woff2 binary

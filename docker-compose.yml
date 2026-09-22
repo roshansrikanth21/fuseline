@@ -1,0 +1,17 @@
+# One-command run:  docker compose up --build   ->  http://localhost:8000
+#
+# Fuseline has no authentication, so the port is published on loopback only. Don't change
+# this to "8000:8000" on a shared machine. To reach it via another host name, also set
+# FUSELINE_ALLOWED_HOSTS (see README, "Configuration").
+services:
+  fuseline:
+    build: .
+    image: fuseline:latest
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - fuseline-data:/data
+    restart: unless-stopped
+
+volumes:
+  fuseline-data:

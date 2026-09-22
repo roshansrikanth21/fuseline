@@ -9,8 +9,8 @@ CASE_ID_RE = re.compile(
     re.IGNORECASE,
 )
 
-MAX_UPLOAD_BYTES = 64 * 1024 * 1024  # 64 MiB
 READ_CHUNK = 1024 * 1024
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
 def assert_safe_case_id(case_id: str) -> str:
@@ -46,3 +46,20 @@ def assert_under(path: Path, root: Path) -> Path:
     except ValueError as exc:
         raise ValueError("Path escapes allowed directory") from exc
     return resolved
+
+
+def quote_ident(name: str) -> str:
+    """Quote an SQLite identifier. Table/column names inside evidence databases are untrusted."""
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def csv_safe(value: object) -> object:
+    """Neutralise spreadsheet formula injection in exported cells.
+
+    Titles, URLs and package names come from evidence and may be attacker-controlled; a
+    leading ``=``/``+``/``-``/``@`` would execute as a formula when the CSV is opened in
+    Excel or LibreOffice. The JSON export stays byte-for-byte faithful.
+    """
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
